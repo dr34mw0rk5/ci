@@ -242,6 +242,11 @@ commit, so `pull_request` events never fire — the checks are not red, they are
 absent, and a required-checks ruleset then blocks the PR forever. If a PR's
 checks vanish, look at mergeability before looking at the workflows.
 
+**Turborepo 2 runs tasks in strict environment mode.** A variable set on the
+workflow step is stripped before the task starts unless it is declared in
+`globalEnv` or the task's own `env`. Setting `SKIP_ENV_VALIDATION:` on a step
+and watching the typed env loader still fail closed is this, not a broken flag.
+
 **Portable scripts must respect the strictest repo's lint rules.** A shared
 script using non-null assertions fails in any repo that bans them.
 
