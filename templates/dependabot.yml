@@ -29,10 +29,8 @@ updates:
     # window (dependabot-missing-cooldown), and it is right: without one a
     # compromised release can be auto-proposed minutes after publication.
     cooldown:
+      # Only default-days is valid outside semver ecosystems.
       default-days: 7
-      semver-major-days: 30
-      semver-minor-days: 7
-      semver-patch-days: 3
     schedule:
       interval: weekly
       day: monday
@@ -46,10 +44,8 @@ updates:
     # window (dependabot-missing-cooldown), and it is right: without one a
     # compromised release can be auto-proposed minutes after publication.
     cooldown:
+      # Only default-days is valid outside semver ecosystems.
       default-days: 7
-      semver-major-days: 30
-      semver-minor-days: 7
-      semver-patch-days: 3
     schedule:
       interval: weekly
       day: monday
