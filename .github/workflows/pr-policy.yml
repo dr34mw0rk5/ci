@@ -1,0 +1,91 @@
+name: Pull Request Policy
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        type: string
+        default: ubuntu-latest
+      package-manager:
+        description: bun or pnpm — decides which toolchain pin is verified.
+        type: string
+        default: bun
+      eval-allowlist:
+        description: >-
+          Newline-separated git pathspecs excluded from the obfuscated-payload scan,
+          for files that legitimately need eval.
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  hygiene:
+    name: hygiene
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          fetch-depth: 0
+
+      - name: Reject whitespace errors
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: git diff --check "origin/${BASE_REF}...HEAD"
+
+      # A tracked .env is unrecoverable — rewriting history does not un-leak it.
+      - name: Reject newly tracked environment files
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          offenders="$({
+            git diff --name-only --diff-filter=AM "origin/${BASE_REF}...HEAD" \
+              | grep -E '(^|/)\.env($|\.)' \
+              | grep -Ev '(^|/)\.env\.(schema|example)$|(^|/)\.env\.local\.example$'
+          } || true)"
+          if [ -n "$offenders" ]; then
+            echo "::error::Environment files must not be tracked:"
+            printf '%s\n' "$offenders"
+            exit 1
+          fi
+
+      # Dropper patterns from the Shai-Hulud / TronGrid class of npm worms: a
+      # large base64 blob handed to atob, a dynamic Function constructor, or a
+      # detached child process. Legitimate uses go in eval-allowlist.
+      - name: Reject obfuscated payload patterns
+        env:
+          EVAL_ALLOWLIST: ${{ inputs.eval-allowlist }}
+        run: |
+          set -euo pipefail
+          pathspecs=( '*.ts' '*.tsx' '*.js' '*.mjs' '*.cjs'
+                      ':!**/*.test.*' ':!**/*.spec.*' ':!**/dist/**' ':!**/build/**' )
+          while IFS= read -r extra; do
+            [ -n "$extra" ] && pathspecs+=( ":!${extra}" )
+          done <<<"$EVAL_ALLOWLIST"
+          if git grep -nE '\beval[[:space:]]*\(|\bnew[[:space:]]+Function[[:space:]]*\(|\batob[[:space:]]*\([[:space:]]*['"'"'"][A-Za-z0-9+/=]{200,}|child_process[[:space:]]*[)\.].*spawn.*detached' \
+              -- "${pathspecs[@]}"; then
+            echo "::error::Suspicious pattern (eval / new Function / large atob / detached spawn). Review it; if intentional, add the path to eval-allowlist."
+            exit 1
+          fi
+
+  toolchain:
+    name: toolchain
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      # Both setup actions fail the job when the runtime does not match the pin
+      # in package.json, so this needs no assertions of its own.
+      - if: inputs.package-manager == 'bun'
+        uses: dr34mw0rk5/ci/actions/setup-bun@v1
+        with:
+          install: "false"
+
+      - if: inputs.package-manager == 'pnpm'
+        uses: dr34mw0rk5/ci/actions/setup-pnpm@v1
+        with:
+          install: "false"

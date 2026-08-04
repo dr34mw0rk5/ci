@@ -1,0 +1,163 @@
+name: Release (Docker → GHCR → Coolify)
+
+# gate → build → deploy → verify. The gate is the part three of our four Track A
+# repos are missing: without it, `push: main` starts the build in parallel with CI
+# and ships images from commits nobody verified.
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        type: string
+        default: ubuntu-latest
+      required-checks:
+        description: Space-separated check-run names that must be green before building. Empty disables the gate (not recommended).
+        type: string
+        default: typecheck lint test audit
+      images:
+        description: >-
+          JSON array of images to build:
+          [{"name": "server", "image": "ghcr.io/org/server", "file": "Dockerfile", "target": "runner", "context": "."}]
+          Optional per entry: "build-args" (newline-separated), "platforms".
+        type: string
+        required: true
+      moving-tag:
+        description: Moving tag applied alongside the immutable :<sha> tag.
+        type: string
+        default: latest
+      blacksmith:
+        description: Use the Blacksmith docker builder instead of buildx + GHA cache.
+        type: boolean
+        default: false
+      environment:
+        description: GitHub Environment guarding the deploy job.
+        type: string
+        default: production
+      release-urls:
+        description: Newline-separated public /version URLs, one per deployed app.
+        type: string
+        required: true
+      smoke-urls:
+        description: Newline-separated URLs that must answer 200 after the rollout.
+        type: string
+        default: ""
+      attest:
+        description: Publish build provenance attestations for each image.
+        type: boolean
+        default: true
+    secrets:
+      COOLIFY_WEBHOOK_URL:
+        required: true
+      COOLIFY_TOKEN:
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    name: gate
+    if: inputs.required-checks != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    permissions:
+      contents: read
+      checks: read
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: dr34mw0rk5/ci/actions/wait-for-ci@v1
+        with:
+          checks: ${{ inputs.required-checks }}
+
+  build:
+    name: build ${{ matrix.name }}
+    needs: gate
+    # `always()` so a repo that deliberately runs without a gate still builds.
+    if: ${{ always() && (needs.gate.result == 'success' || needs.gate.result == 'skipped') }}
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(inputs.images) }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Blacksmith builder
+        if: inputs.blacksmith
+        uses: useblacksmith/setup-docker-builder@6ff44f8e5255f9d8aa31ef22f7e57a2d926b7da0 # v1
+
+      - name: Setup Buildx
+        if: ${{ !inputs.blacksmith }}
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Build and push (Blacksmith)
+        if: inputs.blacksmith
+        id: push-blacksmith
+        uses: useblacksmith/build-push-action@fb9e3e6a9299c78462bfadd0d93352c316adc9b8 # v2
+        with:
+          context: ${{ matrix.context || '.' }}
+          file: ${{ matrix.file }}
+          target: ${{ matrix.target || '' }}
+          push: true
+          build-args: |
+            GIT_SHA=${{ github.sha }}
+            ${{ matrix.build-args }}
+          tags: |
+            ${{ matrix.image }}:${{ github.sha }}
+            ${{ matrix.image }}:${{ inputs.moving-tag }}
+
+      - name: Build and push (Buildx)
+        if: ${{ !inputs.blacksmith }}
+        id: push-buildx
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: ${{ matrix.context || '.' }}
+          file: ${{ matrix.file }}
+          target: ${{ matrix.target || '' }}
+          platforms: ${{ matrix.platforms || 'linux/amd64' }}
+          push: true
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+          build-args: |
+            GIT_SHA=${{ github.sha }}
+            ${{ matrix.build-args }}
+          tags: |
+            ${{ matrix.image }}:${{ github.sha }}
+            ${{ matrix.image }}:${{ inputs.moving-tag }}
+
+      - name: Attest provenance
+        if: inputs.attest
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        with:
+          subject-name: ${{ matrix.image }}
+          subject-digest: ${{ steps.push-blacksmith.outputs.digest || steps.push-buildx.outputs.digest }}
+          push-to-registry: true
+
+  deploy:
+    name: deploy
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    environment: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: dr34mw0rk5/ci/actions/deploy-coolify@v1
+        with:
+          expected-version: ${{ github.sha }}
+          release-urls: ${{ inputs.release-urls }}
+          smoke-urls: ${{ inputs.smoke-urls }}
+          webhook-url: ${{ secrets.COOLIFY_WEBHOOK_URL }}
+          token: ${{ secrets.COOLIFY_TOKEN }}

@@ -1,0 +1,44 @@
+# .github/workflows/ci.yml — thin caller for a Bun repo.
+# Replace the self-contained ci.yml with this once dr34mw0rk5/ci is published.
+name: CI
+
+on:
+  pull_request:
+  merge_group:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    uses: dr34mw0rk5/ci/.github/workflows/ci-bun.yml@v1.0.0
+    with:
+      runner: blacksmith-4vcpu-ubuntu-2404
+      # One entry per required status check. The check appears as "ci / <name>".
+      tasks: >-
+        [
+          {"name": "typecheck", "run": "bun run typecheck --cache-dir=.turbo --concurrency=4"},
+          {"name": "test",      "run": "bun run test --cache-dir=.turbo"},
+          {"name": "audit",     "run": "bun audit --audit-level=high"}
+        ]
+
+  policy:
+    uses: dr34mw0rk5/ci/.github/workflows/pr-policy.yml@v1.0.0
+    with:
+      package-manager: bun
+
+  sast:
+    uses: dr34mw0rk5/ci/.github/workflows/semgrep.yml@v1.0.0
+
+  db:
+    uses: dr34mw0rk5/ci/.github/workflows/db-migrations.yml@v1.0.0
+    with:
+      journal-command: bun run check-migration-journal
+      migrate-command: bun run packages/db/src/migrate.ts

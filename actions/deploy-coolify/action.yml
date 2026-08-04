@@ -1,0 +1,147 @@
+name: Deploy to Coolify
+description: Trigger a Coolify deployment, wait for it to finish, and prove the expected release is live.
+
+# Three questions, three phases:
+#   1. Is the release already live?          -> skip, so two workflows can share one webhook
+#   2. Did Coolify's rollout succeed?        -> poll the deployment UUID
+#   3. Is the new SHA actually being served? -> poll every public /version
+# Followed by a smoke pass, because a booted-but-broken server answers /version fine.
+
+inputs:
+  expected-version:
+    description: Release version every public manifest must report (normally github.sha).
+    required: true
+  release-urls:
+    description: Newline-separated public release manifest URLs. One per app — a missing entry means a dead app reports success.
+    required: true
+  webhook-url:
+    description: Coolify deploy webhook URL.
+    required: true
+  token:
+    description: Coolify API token with deployment read access.
+    required: true
+  smoke-urls:
+    description: Newline-separated URLs that must answer HTTP 200 after the rollout. Optional.
+    default: ""
+  deployment-timeout-seconds:
+    description: How long Coolify may take to report a finished deployment.
+    default: "900"
+  release-timeout-seconds:
+    description: How long the new version may take to appear on every release URL.
+    default: "1200"
+
+runs:
+  using: composite
+  steps:
+    - name: Trigger deployment and wait for the release
+      shell: bash
+      env:
+        EXPECTED_VERSION: ${{ inputs.expected-version }}
+        RELEASE_URLS: ${{ inputs.release-urls }}
+        COOLIFY_TOKEN: ${{ inputs.token }}
+        COOLIFY_WEBHOOK_URL: ${{ inputs.webhook-url }}
+        DEPLOY_TIMEOUT: ${{ inputs.deployment-timeout-seconds }}
+        RELEASE_TIMEOUT: ${{ inputs.release-timeout-seconds }}
+      run: |
+        set -euo pipefail
+
+        # Accepts both shapes of the version contract: {"commit": …} from servers
+        # and {"version": …} from SPA build-time manifests.
+        pending_release_versions() {
+          local pending="" url manifest live
+          while IFS= read -r url; do
+            [ -z "$url" ] && continue
+            manifest=$(curl --silent --fail --show-error --max-time 20 \
+              --header "Cache-Control: no-cache" \
+              "${url}?release=${EXPECTED_VERSION}" || true)
+            live=$(jq -r '.commit // .version // "unavailable"' <<<"$manifest" 2>/dev/null || echo unavailable)
+            if [ "$live" != "$EXPECTED_VERSION" ]; then
+              pending="${pending}${url}=${live:-unavailable} "
+            fi
+          done <<<"$RELEASE_URLS"
+          printf '%s' "$pending"
+        }
+
+        if [ -z "$(pending_release_versions)" ]; then
+          echo "Release $EXPECTED_VERSION is already live; skipping redundant Coolify deployment."
+          exit 0
+        fi
+
+        response=$(curl --silent --fail --show-error --request GET \
+          "$COOLIFY_WEBHOOK_URL" --header "Authorization: Bearer $COOLIFY_TOKEN")
+        deployment_uuid=$(jq -er '.deployments[0].deployment_uuid // .deployment_uuid' <<<"$response")
+        api_origin=$(sed -E 's#(https?://[^/]+).*#\1#' <<<"$COOLIFY_WEBHOOK_URL")
+        echo "Coolify accepted deployment $deployment_uuid."
+
+        # Phase 2 — the rollout itself. A failed pull or a crash-looping container
+        # shows up here minutes before the version poll would time out.
+        status_body=$(mktemp)
+        trap 'rm -f "$status_body"' EXIT
+        deadline=$((SECONDS + DEPLOY_TIMEOUT))
+        while [ "$SECONDS" -lt "$deadline" ]; do
+          http_code=$(curl --silent --show-error --output "$status_body" --write-out '%{http_code}' \
+            "$api_origin/api/v1/deployments/$deployment_uuid" \
+            --header "Authorization: Bearer $COOLIFY_TOKEN" || echo 000)
+          case "$http_code" in
+            200)
+              status=$(jq -r '.status // empty' <"$status_body")
+              echo "deployment $deployment_uuid: ${status:-unknown}"
+              case "$(printf '%s' "$status" | tr '[:upper:]' '[:lower:]')" in
+                finished|completed|success) break ;;
+                failed|cancelled|canceled|error)
+                  echo "::error::Coolify deployment $deployment_uuid ended as '$status'."
+                  exit 1 ;;
+              esac ;;
+            401|403)
+              echo "::error::Coolify denied deployment-status access (HTTP $http_code). COOLIFY_TOKEN needs deployment read access."
+              exit 1 ;;
+            000|404|429|5??)
+              echo "deployment status not available yet (HTTP $http_code)" ;;
+            *)
+              echo "::error::Unexpected HTTP $http_code from the Coolify deployment status API."
+              exit 1 ;;
+          esac
+          sleep 10
+        done
+
+        # Phase 3 — the only signal that actually proves the new code is serving
+        # traffic. Cache-busted, so a CDN cannot fake it.
+        deadline=$((SECONDS + RELEASE_TIMEOUT))
+        last=""
+        echo "Waiting for release $EXPECTED_VERSION on every configured endpoint…"
+        while [ "$SECONDS" -lt "$deadline" ]; do
+          pending=$(pending_release_versions)
+          if [ -z "$pending" ]; then
+            echo "Release $EXPECTED_VERSION is live everywhere."
+            exit 0
+          fi
+          if [ "$pending" != "$last" ]; then
+            echo "waiting for: $pending"
+            last="$pending"
+          fi
+          sleep 10
+        done
+
+        echo "::error::Release $EXPECTED_VERSION was not live on every endpoint in time. Still pending: $last"
+        exit 1
+
+    - name: Smoke
+      if: inputs.smoke-urls != ''
+      shell: bash
+      env:
+        SMOKE_URLS: ${{ inputs.smoke-urls }}
+      run: |
+        set -euo pipefail
+        fail=0
+        while IFS= read -r url; do
+          [ -z "$url" ] && continue
+          code=$(curl --silent --output /dev/null --write-out '%{http_code}' \
+            --max-time 15 --retry 3 --retry-delay 5 "$url" || echo 000)
+          if [ "$code" = "200" ]; then
+            echo "OK  $url"
+          else
+            echo "::error::$url answered HTTP $code after rollout."
+            fail=1
+          fi
+        done <<<"$SMOKE_URLS"
+        exit $fail

@@ -1,0 +1,63 @@
+name: CI (pnpm)
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        type: string
+        default: ubuntu-latest
+      tasks:
+        description: >-
+          JSON array of {"name", "run"} objects. One job, and therefore one status
+          check, per entry.
+        type: string
+        default: >-
+          [
+            {"name": "typecheck", "run": "pnpm turbo run typecheck"},
+            {"name": "lint",      "run": "pnpm turbo run lint"},
+            {"name": "format",    "run": "pnpm exec oxfmt --check"},
+            {"name": "test",      "run": "pnpm turbo run test"},
+            {"name": "audit",     "run": "pnpm audit --audit-level high"},
+            {"name": "workspace", "run": "pnpm dlx sherif@1"}
+          ]
+      install-args:
+        type: string
+        default: --frozen-lockfile
+      timeout-minutes:
+        type: number
+        default: 20
+    secrets:
+      TURBO_TOKEN:
+        description: Turborepo remote cache token. Optional.
+        required: false
+
+permissions:
+  contents: read
+
+env:
+  FORCE_COLOR: 3
+  TURBO_TEAM: ${{ vars.TURBO_TEAM }}
+  TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
+
+jobs:
+  check:
+    name: ${{ matrix.name }}
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: ${{ inputs.timeout-minutes }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(inputs.tasks) }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          fetch-depth: 0
+
+      - uses: dr34mw0rk5/ci/actions/setup-pnpm@v1
+        with:
+          install-args: ${{ inputs.install-args }}
+
+      - name: ${{ matrix.name }}
+        env:
+          TASK_COMMAND: ${{ matrix.run }}
+        run: bash -eo pipefail -c "$TASK_COMMAND"

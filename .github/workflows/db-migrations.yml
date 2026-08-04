@@ -1,0 +1,90 @@
+name: Database migrations
+
+# The deploy migrator runs the whole pending batch in ONE transaction: a single
+# invalid statement rolls back every pending migration and blocks all environments.
+# `journal` guards the ordering invariant; `replay` is the only check that actually
+# executes the SQL.
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        type: string
+        default: ubuntu-latest
+      package-manager:
+        type: string
+        default: bun
+      journal-command:
+        description: Command asserting the migration journal invariants. Empty to skip.
+        type: string
+        default: ""
+      migrate-command:
+        description: Command that applies every migration using the real production migrator.
+        type: string
+        required: true
+      postgres-image:
+        type: string
+        default: postgres:17
+      extra-env:
+        description: Newline-separated KEY=VALUE pairs the migrator's env schema requires but does not use.
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  journal:
+    name: journal
+    if: inputs.journal-command != ''
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - if: inputs.package-manager == 'bun'
+        uses: dr34mw0rk5/ci/actions/setup-bun@v1
+      - if: inputs.package-manager == 'pnpm'
+        uses: dr34mw0rk5/ci/actions/setup-pnpm@v1
+      # Strictly increasing `when`, none in the future. A future stamp poisons the
+      # migrator's watermark and silently skips every later migration — twice the
+      # cause of a production outage.
+      - env:
+          TASK_COMMAND: ${{ inputs.journal-command }}
+        run: bash -eo pipefail -c "$TASK_COMMAND"
+
+  replay:
+    name: replay
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: ${{ inputs.postgres-image }}
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - if: inputs.package-manager == 'bun'
+        uses: dr34mw0rk5/ci/actions/setup-bun@v1
+      - if: inputs.package-manager == 'pnpm'
+        uses: dr34mw0rk5/ci/actions/setup-pnpm@v1
+
+      - name: Apply every migration to an empty database
+        env:
+          DATABASE_URL: postgres://postgres:postgres@localhost:5432/ci
+          SKIP_ENV_VALIDATION: "1"
+          EXTRA_ENV: ${{ inputs.extra-env }}
+          TASK_COMMAND: ${{ inputs.migrate-command }}
+        run: |
+          set -euo pipefail
+          while IFS= read -r pair; do
+            [ -n "$pair" ] && echo "$pair" >> "$GITHUB_ENV" && export "${pair?}"
+          done <<<"$EXTRA_ENV"
+          bash -eo pipefail -c "$TASK_COMMAND"

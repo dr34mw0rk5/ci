@@ -1,0 +1,31 @@
+# Drop into .github/dependabot.yml in every Track A repo.
+# The `github-actions` ecosystem is the important one: it bumps both the pinned
+# action SHAs and the `dr34mw0rk5/ci/...@vX.Y.Z` reusable-workflow refs, which is
+# what keeps the shared standard rolling out without a custom sync bot.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 10
+    groups:
+      all-dependencies:
+        patterns: ["*"]
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      actions:
+        patterns: ["*"]
+
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday

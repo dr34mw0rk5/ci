@@ -1,0 +1,56 @@
+name: Setup pnpm toolchain
+description: pnpm from package.json#packageManager, Node from .nvmrc, frozen install.
+
+inputs:
+  install:
+    description: Run pnpm install.
+    default: "true"
+  install-args:
+    description: Arguments passed to pnpm install. Never drop --frozen-lockfile in CI.
+    default: --frozen-lockfile
+  copy-env-example:
+    description: Copy .env.example to .env before running anything (many turbo tasks read it).
+    default: "true"
+
+runs:
+  using: composite
+  steps:
+    # The pnpm version comes from package.json#packageManager — do not restate it here.
+    - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+
+    - uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903 # v6.0.0
+      with:
+        node-version-file: .nvmrc
+        cache: pnpm
+
+    - name: Verify the runtime matches the pins
+      shell: bash
+      run: |
+        set -euo pipefail
+        expected="$(jq -r '.packageManager // empty' package.json)"
+        case "$expected" in
+          pnpm@*) ;;
+          *) echo "::error::package.json must pin pnpm via packageManager (got '${expected:-none}')"; exit 1 ;;
+        esac
+        actual="pnpm@$(pnpm --version)"
+        if [ "$actual" != "$expected" ]; then
+          echo "::error::expected $expected, runner has $actual"
+          exit 1
+        fi
+        echo "$actual on node $(node --version)"
+
+    - name: Copy env example
+      if: inputs.copy-env-example == 'true'
+      shell: bash
+      run: |
+        if [ -f .env.example ] && [ ! -f .env ]; then cp .env.example .env; fi
+
+    # --frozen-lockfile is not optional. Without it CI resolves dependencies fresh
+    # and can go green against a tree that does not match the lockfile — which is
+    # exactly what an automerged dependency PR needs to slip through.
+    - name: Install
+      if: inputs.install == 'true'
+      shell: bash
+      env:
+        INSTALL_ARGS: ${{ inputs.install-args }}
+      run: pnpm install $INSTALL_ARGS

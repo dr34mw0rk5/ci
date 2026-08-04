@@ -1,0 +1,68 @@
+name: Wait for CI gates
+description: Refuse to release a commit whose required check runs are not green.
+
+# Branch protection alone does not cover this. A `push`-triggered release workflow
+# starts in parallel with CI, not after it, and workflow_dispatch bypasses branch
+# protection entirely. This is the gate that makes "the image was built from a
+# verified commit" true.
+
+inputs:
+  checks:
+    description: >-
+      Space-separated required check-run names. Matched as a substring, so
+      "typecheck" also matches the reusable-workflow form "ci / typecheck".
+    required: true
+  timeout-seconds:
+    description: How long to wait for all checks to complete.
+    default: "1800"
+  sha:
+    description: Commit to gate on.
+    default: ${{ github.sha }}
+  token:
+    description: "Token with `checks: read` permission."
+    default: ${{ github.token }}
+
+runs:
+  using: composite
+  steps:
+    - name: Wait for required check runs
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        REQUIRED_CHECKS: ${{ inputs.checks }}
+        TIMEOUT: ${{ inputs.timeout-seconds }}
+        TARGET_SHA: ${{ inputs.sha }}
+      run: |
+        set -euo pipefail
+        deadline=$((SECONDS + TIMEOUT))
+        while true; do
+          runs=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${TARGET_SHA}/check-runs" \
+            --paginate --jq '.check_runs[] | "\(.name)|\(.status)|\(.conclusion)"')
+          pending=0
+          for check in $REQUIRED_CHECKS; do
+            line=$(printf '%s\n' "$runs" | grep -F "${check}|" | head -1 || true)
+            if [ -z "$line" ]; then
+              echo "waiting: check '$check' not reported yet"
+              pending=1
+              continue
+            fi
+            status=$(printf '%s' "$line" | cut -d'|' -f2)
+            conclusion=$(printf '%s' "$line" | cut -d'|' -f3)
+            if [ "$status" != "completed" ]; then
+              echo "waiting: $check is $status"
+              pending=1
+            elif [ "$conclusion" != "success" ] && [ "$conclusion" != "skipped" ]; then
+              echo "::error::CI gate '$check' concluded '$conclusion' — refusing to release ${TARGET_SHA}."
+              exit 1
+            fi
+          done
+          if [ "$pending" -eq 0 ]; then
+            echo "All CI gates green for ${TARGET_SHA}."
+            break
+          fi
+          if [ $SECONDS -ge $deadline ]; then
+            echo "::error::Timed out waiting for CI gates on ${TARGET_SHA}."
+            exit 1
+          fi
+          sleep 20
+        done
