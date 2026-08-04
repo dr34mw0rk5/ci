@@ -6,6 +6,14 @@ version: 2
 updates:
   - package-ecosystem: npm
     directory: /
+    # Semgrep's supply-chain ruleset flags an update config with no quarantine
+    # window (dependabot-missing-cooldown), and it is right: without one a
+    # compromised release can be auto-proposed minutes after publication.
+    cooldown:
+      default-days: 7
+      semver-major-days: 30
+      semver-minor-days: 7
+      semver-patch-days: 3
     schedule:
       interval: weekly
       day: monday
@@ -17,6 +25,14 @@ updates:
 
   - package-ecosystem: github-actions
     directory: /
+    # Semgrep's supply-chain ruleset flags an update config with no quarantine
+    # window (dependabot-missing-cooldown), and it is right: without one a
+    # compromised release can be auto-proposed minutes after publication.
+    cooldown:
+      default-days: 7
+      semver-major-days: 30
+      semver-minor-days: 7
+      semver-patch-days: 3
     schedule:
       interval: weekly
       day: monday
@@ -26,6 +42,14 @@ updates:
 
   - package-ecosystem: docker
     directory: /
+    # Semgrep's supply-chain ruleset flags an update config with no quarantine
+    # window (dependabot-missing-cooldown), and it is right: without one a
+    # compromised release can be auto-proposed minutes after publication.
+    cooldown:
+      default-days: 7
+      semver-major-days: 30
+      semver-minor-days: 7
+      semver-patch-days: 3
     schedule:
       interval: weekly
       day: monday

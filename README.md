@@ -195,6 +195,38 @@ Organization secrets do not cross org boundaries. Set the bootstrap credentials
 (`COOLIFY_*`, `INFISICAL_*`, `TRIGGER_ACCESS_TOKEN`, registry tokens) as **organization** secrets
 scoped to the relevant repos, so rotation is one edit per org.
 
+## Traps found by the first real runs
+
+Every one of these blocked a pull request the first time the standard ran for real.
+
+**A required check must be able to report on every PR.** Not just "usually run".
+A `branches:` or `paths:` filter on a required workflow means PRs outside that
+filter sit at *"Expected — Waiting for status to be reported"* forever. `ci-*`,
+`pr-policy` and `db-migrations` therefore carry no such filters, and jobs that
+legitimately need them (coverage floors, prose lint) stay out of the required set.
+
+**Do not pass a flag the package script already sets.** `bun run typecheck
+--concurrency=4` where the script is already `turbo typecheck --concurrency=4`
+fails with *"the argument '--concurrency' cannot be used multiple times"*.
+
+**`eval` needs a tight pattern.** `\beval[[:space:]]*\(` matches English prose
+inside template literals — *"…detection eval (per-kind precision/recall)"*.
+Require no space before the paren.
+
+**Dependabot needs a `cooldown`.** Semgrep's `dependabot-missing-cooldown` is a
+real finding: without a quarantine window a compromised release can be
+auto-proposed minutes after publication. See `templates/dependabot.yml`.
+
+**`turbo run <task>` errors when the task is undefined.** A `test` job in a repo
+whose `turbo.json` has no `test` task fails outright rather than no-opping.
+Define the task; packages without a `test` script are then simply skipped.
+
+**Repo-wide lint and format are red almost everywhere.** Gate changed files
+instead, or the gate is red on day one and gets ignored.
+
+**Portable scripts must respect the strictest repo's lint rules.** A shared
+script using non-null assertions fails in any repo that bans them.
+
 ## Versioning
 
 - `v1` — moving tag, latest compatible release.

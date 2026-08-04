@@ -53,6 +53,8 @@ jobs:
           fi
 
       # Dropper patterns from the Shai-Hulud / TronGrid class of npm worms: a
+      # NOTE: `eval(` must have no space before the paren. Allowing one matched
+      # English prose inside template literals ("...detection eval (per-kind...").
       # large base64 blob handed to atob, a dynamic Function constructor, or a
       # detached child process. Legitimate uses go in eval-allowlist.
       - name: Reject obfuscated payload patterns
@@ -65,7 +67,7 @@ jobs:
           while IFS= read -r extra; do
             [ -n "$extra" ] && pathspecs+=( ":!${extra}" )
           done <<<"$EVAL_ALLOWLIST"
-          if git grep -nE '\beval[[:space:]]*\(|\bnew[[:space:]]+Function[[:space:]]*\(|\batob[[:space:]]*\([[:space:]]*['"'"'"][A-Za-z0-9+/=]{200,}|child_process[[:space:]]*[)\.].*spawn.*detached' \
+          if git grep -nE '(^|[^.[:alnum:]_])eval\(|\bnew[[:space:]]+Function[[:space:]]*\(|\batob[[:space:]]*\([[:space:]]*['"'"'"][A-Za-z0-9+/=]{200,}|child_process[[:space:]]*[)\.].*spawn.*detached' \
               -- "${pathspecs[@]}"; then
             echo "::error::Suspicious pattern (eval / new Function / large atob / detached spawn). Review it; if intentional, add the path to eval-allowlist."
             exit 1
