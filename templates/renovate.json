@@ -1,6 +1,9 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["config:recommended", ":dependencyDashboard"],
+  "extends": [
+    "config:recommended",
+    ":dependencyDashboard"
+  ],
   "minimumReleaseAge": "7 days",
   "internalChecksFilter": "strict",
   "rangeStrategy": "bump",
@@ -8,23 +11,33 @@
   "packageRules": [
     {
       "description": "Workspace packages are versioned by the monorepo, not by Renovate.",
-      "matchPackageNames": ["/^@repo//"],
-      "enabled": false
+      "matchPackageNames": [
+        "/^@repo//"
+      ],
+      "enabled": false,
+      "minimumReleaseAge": "7 days"
     },
     {
       "description": "Only low-risk dev tooling automerges, and only once a real test suite gates it.",
-      "matchDepTypes": ["devDependencies"],
-      "matchUpdateTypes": ["patch"],
-      "automerge": true
+      "matchDepTypes": [
+        "devDependencies"
+      ],
+      "matchUpdateTypes": [
+        "patch"
+      ],
+      "automerge": true,
+      "minimumReleaseAge": "7 days"
     },
     {
-      "description": "Pin actions to digests and keep them updated — better than a hand-pinned SHA nobody bumps.",
-      "matchManagers": ["github-actions"],
-      "pinDigests": true
+      "description": "Pin actions to digests and keep them updated \u2014 better than a hand-pinned SHA nobody bumps.",
+      "matchManagers": [
+        "github-actions"
+      ],
+      "pinDigests": true,
+      "minimumReleaseAge": "7 days"
     }
   ],
   "vulnerabilityAlerts": {
-    "minimumReleaseAge": null,
     "automerge": false
   }
 }

@@ -224,6 +224,24 @@ Define the task; packages without a `test` script are then simply skipped.
 **Repo-wide lint and format are red almost everywhere.** Gate changed files
 instead, or the gate is red on day one and gets ignored.
 
+**Semgrep audits your CI config, not just your code.** Two of its supply-chain
+rules fire on this standard's own files: `dependabot-missing-cooldown` and
+`renovate-missing-minimum-release-age`. Both are correct — an update config with
+no quarantine window will happily propose a release published minutes ago. Note
+that a top-level `minimumReleaseAge` does not satisfy the Renovate rule: every
+`packageRule` must carry it, and a `vulnerabilityAlerts` override that shortens
+it re-triggers the finding.
+
+**Do not assume a CLI flag exists everywhere.** `oxlint
+--no-error-on-unmatched-pattern` is accepted by 1.68 and rejected outright by
+1.53. Pinning the toolchain per repo means the same shared snippet can fail in
+one of them.
+
+**A conflicted PR runs no workflows at all.** GitHub cannot build the merge
+commit, so `pull_request` events never fire — the checks are not red, they are
+absent, and a required-checks ruleset then blocks the PR forever. If a PR's
+checks vanish, look at mergeability before looking at the workflows.
+
 **Portable scripts must respect the strictest repo's lint rules.** A shared
 script using non-null assertions fails in any repo that bans them.
 
