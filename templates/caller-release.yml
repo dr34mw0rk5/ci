@@ -1,19 +1,20 @@
-# .github/workflows/release-server.yml — thin caller for a Track A repo.
+# .github/workflows/release-server.yml — thin caller for a self-hosted repo.
 name: Release Server
 
+# workflow_run, NOT push. A push-triggered release starts in parallel with CI
+# and has to busy-wait for its check runs — billed idle minutes on every merge.
+# Here the checks are already decided when this starts, so the gate is one API
+# read, and CI's own cancel-in-progress debounces rapid successive merges for
+# free (a cancelled CI run skips the release entirely).
+#
+# workflow_run has no `paths:` filter; `relevant-paths` below replaces it by
+# diffing against the commit production actually serves.
 on:
   workflow_dispatch:
-  push:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
     branches: [main]
-    paths:
-      - "apps/server/**"
-      - "packages/**"
-      - "Dockerfile"
-      - "package.json"
-      - "bun.lock"
-      - ".env.schema"
-      - "docker-compose.prod.yaml"
-      - ".github/workflows/release-server.yml"
 
 # NOT keyed on github.ref. One webhook redeploys the whole compose stack, so api
 # and web releases must queue behind each other — overlapping redeploys recreate
@@ -27,12 +28,19 @@ permissions:
 
 jobs:
   release:
-    uses: dr34mw0rk5/ci/.github/workflows/release-docker.yml@v1.0.0
+    uses: dr34mw0rk5/ci/.github/workflows/release-docker.yml@v1.1.0
     secrets: inherit
     with:
+      # Keep the build on the large runner; the gate/deploy/verify jobs are API
+      # and I/O bound and belong on the smallest tier.
       runner: blacksmith-4vcpu-ubuntu-2404
+      gate-runner: blacksmith-2vcpu-ubuntu-2404
       blacksmith: true
       required-checks: typecheck test audit migration-journal migrate
+      relevant-paths: >-
+        apps/server packages package.json bun.lock bunfig.toml .env.schema
+        docker-compose.prod.yaml .github/workflows/release-server.yml
+      version-url: https://api.example.com/version
       images: >-
         [
           {"name": "server",   "image": "ghcr.io/ORG/server",   "file": "Dockerfile", "target": "runner"},

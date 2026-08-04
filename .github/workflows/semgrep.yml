@@ -1,5 +1,9 @@
 name: Semgrep
 
+# Advisory scanners run on PRs only. Re-running them on the push to main is a
+# duplicate of the scan the PR already passed — one repo was billing ~4,000
+# runs/month for the second copy. New registry rules are picked up by the
+# caller's weekly cron instead.
 on:
   workflow_call:
     inputs:

@@ -1,19 +1,55 @@
 name: Release (Docker → GHCR → Coolify)
 
-# gate → build → deploy → verify. The gate is the part three of our four Track A
-# repos are missing: without it, `push: main` starts the build in parallel with CI
-# and ships images from commits nobody verified.
+# gate → build → deploy → verify.
+#
+# The caller must be triggered by `workflow_run` on the CI workflow, NOT by
+# `push`. A push-triggered release starts in parallel with CI and then has to
+# busy-wait for CI's check runs to appear — a `sleep 20` poll loop that bills
+# ~13 idle runner-minutes per merge (≈5,500 min/month at one team's merge rate).
+# Under `workflow_run` the checks are already decided when this workflow starts,
+# so the gate is a single API read.
+#
+# Two consequences worth knowing:
+#
+#  * `workflow_run` has no `paths:` filter. The `relevant-paths` input replaces
+#    it by diffing against the commit production actually serves — which is
+#    better than a path filter, because it self-heals: after a failed rollout
+#    the next merge sees the cumulative diff and redeploys.
+#
+#  * `workflow_run` runs the workflow file from the DEFAULT BRANCH and defaults
+#    to checking out the default branch HEAD. Every checkout, image tag and
+#    rollout comparison must use the triggering run's commit instead. That is
+#    what `DEPLOY_SHA` is for; never use `github.sha` in this workflow.
 
 on:
   workflow_call:
     inputs:
       runner:
+        description: Runner for the image build. Keep this the large one.
+        type: string
+        default: ubuntu-latest
+      gate-runner:
+        description: >-
+          Runner for the gate, deploy and verify jobs. These are API-poll and
+          I/O bound — give them the smallest tier available.
         type: string
         default: ubuntu-latest
       required-checks:
         description: Space-separated check-run names that must be green before building. Empty disables the gate (not recommended).
         type: string
         default: typecheck lint test audit
+      relevant-paths:
+        description: >-
+          Space-separated paths that make a release necessary. Diffed against the
+          commit production currently serves. Empty means always deploy.
+        type: string
+        default: ""
+      version-url:
+        description: >-
+          Public /version endpoint used to read the live commit for that diff.
+          Required when relevant-paths is set.
+        type: string
+        default: ""
       images:
         description: >-
           JSON array of images to build:
@@ -29,6 +65,13 @@ on:
         description: Use the Blacksmith docker builder instead of buildx + GHA cache.
         type: boolean
         default: false
+      prune-build-cache:
+        description: >-
+          Prune buildkit cache older than 7 days after each build. On persistent
+          (sticky-disk) builders the cache otherwise grows without bound — one
+          repo billed 135 GB-months before this was added.
+        type: boolean
+        default: true
       environment:
         description: GitHub Environment guarding the deploy job.
         type: string
@@ -50,30 +93,80 @@ on:
         required: true
       COOLIFY_TOKEN:
         required: true
+    outputs:
+      deployed:
+        description: "true when a build and deploy actually ran."
+        value: ${{ jobs.gate.outputs.deploy }}
 
 permissions:
   contents: read
 
+env:
+  DEPLOY_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+
 jobs:
   gate:
     name: gate
-    if: inputs.required-checks != ''
-    runs-on: ubuntu-latest
+    # A cancelled CI run means a newer commit superseded this one; that commit's
+    # own CI run triggers its own release. Skipping here also debounces the
+    # deploy chains that rapid successive merges would otherwise produce.
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion != 'cancelled' }}
+    runs-on: ${{ inputs.gate-runner }}
     timeout-minutes: 35
     permissions:
       contents: read
       checks: read
+    outputs:
+      deploy: ${{ steps.decide.outputs.deploy }}
+      sha: ${{ env.DEPLOY_SHA }}
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-      - uses: dr34mw0rk5/ci/actions/wait-for-ci@v1
+        with:
+          ref: ${{ env.DEPLOY_SHA }}
+          # The live-commit diff below needs history to fetch the live commit.
+          fetch-depth: 0
+
+      # Under workflow_run the checks are already complete, so this exits on its
+      # first pass. The wait only ever engages on a manual workflow_dispatch
+      # racing an in-flight CI run.
+      - if: inputs.required-checks != ''
+        uses: dr34mw0rk5/ci/actions/wait-for-ci@v1
         with:
           checks: ${{ inputs.required-checks }}
+          sha: ${{ env.DEPLOY_SHA }}
+
+      # Replaces the `paths:` filter that workflow_run cannot have. Any doubt —
+      # unreachable /version, unknown or unfetchable live commit, manual
+      # dispatch — falls back to deploying.
+      - name: Decide whether a release is needed
+        id: decide
+        env:
+          RELEVANT_PATHS: ${{ inputs.relevant-paths }}
+          VERSION_URL: ${{ inputs.version-url }}
+        run: |
+          set -uo pipefail
+          deploy() { echo "deploy=true"  >> "$GITHUB_OUTPUT"; echo "Deploying: $1"; exit 0; }
+          skip()   { echo "deploy=false" >> "$GITHUB_OUTPUT"; echo "Skipping: $1";  exit 0; }
+
+          [ "${{ github.event_name }}" = "workflow_dispatch" ] && deploy "manual dispatch"
+          [ -z "$RELEVANT_PATHS" ] && deploy "no relevant-paths configured"
+          [ -z "$VERSION_URL" ] && deploy "no version-url configured"
+
+          body=$(curl --silent --max-time 10 "$VERSION_URL" || true)
+          live=$(printf '%s' "$body" | jq -r '.commit // .version // empty' 2>/dev/null || true)
+          [ -z "$live" ] && deploy "could not read the live commit from $VERSION_URL"
+          [ "$live" = "$DEPLOY_SHA" ] && skip "production already serves $DEPLOY_SHA"
+
+          git fetch --depth=1 origin "$live" 2>/dev/null || deploy "live commit $live is not fetchable"
+          changed=$(git diff --name-only "$live" "$DEPLOY_SHA" -- $RELEVANT_PATHS)
+          [ -n "$changed" ] && deploy "changes since live commit $live:
+          $changed"
+          skip "no relevant changes between live commit $live and $DEPLOY_SHA"
 
   build:
     name: build ${{ matrix.name }}
     needs: gate
-    # `always()` so a repo that deliberately runs without a gate still builds.
-    if: ${{ always() && (needs.gate.result == 'success' || needs.gate.result == 'skipped') }}
+    if: needs.gate.outputs.deploy == 'true'
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 45
     permissions:
@@ -87,6 +180,8 @@ jobs:
         include: ${{ fromJSON(inputs.images) }}
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ needs.gate.outputs.sha }}
 
       - name: Log in to GHCR
         uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
@@ -113,10 +208,10 @@ jobs:
           target: ${{ matrix.target || '' }}
           push: true
           build-args: |
-            GIT_SHA=${{ github.sha }}
+            GIT_SHA=${{ needs.gate.outputs.sha }}
             ${{ matrix.build-args }}
           tags: |
-            ${{ matrix.image }}:${{ github.sha }}
+            ${{ matrix.image }}:${{ needs.gate.outputs.sha }}
             ${{ matrix.image }}:${{ inputs.moving-tag }}
 
       - name: Build and push (Buildx)
@@ -132,11 +227,19 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.name }}
           cache-to: type=gha,mode=max,scope=${{ matrix.name }}
           build-args: |
-            GIT_SHA=${{ github.sha }}
+            GIT_SHA=${{ needs.gate.outputs.sha }}
             ${{ matrix.build-args }}
           tags: |
-            ${{ matrix.image }}:${{ github.sha }}
+            ${{ matrix.image }}:${{ needs.gate.outputs.sha }}
             ${{ matrix.image }}:${{ inputs.moving-tag }}
+
+      # Only meaningful on a persistent builder (Blacksmith sticky disk, a
+      # self-hosted runner). Best-effort: a prune failure must not fail a build
+      # whose image is already pushed.
+      - name: Prune build cache older than 7 days
+        if: ${{ inputs.prune-build-cache && inputs.blacksmith }}
+        continue-on-error: true
+        run: docker buildx prune --force --filter "until=168h"
 
       - name: Attest provenance
         if: inputs.attest
@@ -148,15 +251,17 @@ jobs:
 
   deploy:
     name: deploy
-    needs: build
-    runs-on: ubuntu-latest
+    needs: [gate, build]
+    runs-on: ${{ inputs.gate-runner }}
     timeout-minutes: 40
     environment: ${{ inputs.environment }}
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ needs.gate.outputs.sha }}
       - uses: dr34mw0rk5/ci/actions/deploy-coolify@v1
         with:
-          expected-version: ${{ github.sha }}
+          expected-version: ${{ needs.gate.outputs.sha }}
           release-urls: ${{ inputs.release-urls }}
           smoke-urls: ${{ inputs.smoke-urls }}
           webhook-url: ${{ secrets.COOLIFY_WEBHOOK_URL }}

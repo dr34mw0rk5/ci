@@ -83,6 +83,56 @@ disables the gate that referenced it. Under a reusable workflow the name becomes
 `<caller-job-id> / <job-name>` — e.g. `ci / typecheck`. `wait-for-ci` matches by substring, so
 `typecheck` keeps matching after a migration; branch-protection entries must be updated by hand.
 
+## Runner cost, and the correctness that comes with it
+
+These are not micro-optimisations bolted on afterwards — the cheap shape is also
+the correct one. One repo's July bill made the case: 30,427 runner-minutes over
+7,754 workflow runs, plus 135 GB-months of sticky disk.
+
+**Release on `workflow_run`, never on `push`.** A push-triggered release starts
+in parallel with CI and then busy-waits for CI's check runs to appear — roughly
+13 billed idle minutes per merge, ~5,500 minutes/month at that repo's merge
+rate. Under `workflow_run` the checks are already decided, so the gate is a
+single API read. It is also *more* correct: a cancelled CI run (superseded by a
+faster follow-up merge) skips the release entirely, which debounces the
+deploy chains that rapid successive merges produce.
+
+Two traps come with it, both handled by `release-docker.yml`:
+
+- `workflow_run` runs the workflow file from the **default branch** and checks
+  out the default branch HEAD. Every checkout, image tag and rollout comparison
+  must use `github.event.workflow_run.head_sha`. Never `github.sha`.
+- `workflow_run` has **no `paths:` filter**. The `relevant-paths` input replaces
+  it by diffing against the commit production actually serves, read from
+  `/version`. That is strictly better than a path filter: it self-heals, because
+  after a failed rollout the next merge sees the cumulative diff. Any doubt —
+  unreachable `/version`, unfetchable live commit, manual dispatch — deploys.
+
+**A green release run no longer means a deploy happened.** Anything chained
+after it (notification sync, cache warm) must check that the build job actually
+ran, or it will wait for a revision that never appears:
+
+```yaml
+conclusion=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/${{ github.event.workflow_run.id }}/jobs?per_page=50" \
+  --jq '.jobs[] | select(.name | startswith("build")) | .conclusion' | head -1)
+[ "$conclusion" = "success" ] || { echo "No image was built — nothing to sync."; exit 0; }
+```
+
+**Prune the build cache.** On a persistent builder the buildkit cache grows
+without bound — that is where the 135 GB-months came from.
+`prune-build-cache` (on by default) drops layers older than 7 days after each
+build, best-effort so a prune failure cannot fail a pushed image.
+
+**Advisory scanners run on PRs only.** Re-running Semgrep and similar on the
+push to main duplicates the scan the PR already passed — ~4,000 redundant runs
+a month on that repo. Keep a weekly cron so newly published registry rules
+still land.
+
+**Right-size the runner.** `runner` builds images; `gate-runner` covers the
+gate, deploy and verify jobs, which are API-poll and I/O bound and belong on
+the smallest tier. Short checks (naming, audit, journal) belong there too —
+about half the per-minute price for jobs that finish in under 30 seconds.
+
 ## Rolling it out
 
 1. Tag a release here (`v1.0.0`). Move `v1` with each compatible change; cut `v2.0.0` for breaking

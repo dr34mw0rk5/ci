@@ -1,10 +1,15 @@
 name: Wait for CI gates
 description: Refuse to release a commit whose required check runs are not green.
 
-# Branch protection alone does not cover this. A `push`-triggered release workflow
-# starts in parallel with CI, not after it, and workflow_dispatch bypasses branch
-# protection entirely. This is the gate that makes "the image was built from a
-# verified commit" true.
+# Branch protection alone does not cover this: workflow_dispatch bypasses it, and
+# a `push`-triggered release starts in parallel with CI rather than after it.
+# This is the gate that makes "the image was built from a verified commit" true.
+#
+# Prefer calling this from a `workflow_run`-triggered release. The checks are
+# then already decided and the loop below exits on its first pass. Under a
+# `push` trigger the same loop busy-waits — billed idle minutes that add up fast
+# (~13 min per merge on one repo, ~5,500 min/month). The wait is kept for the
+# workflow_dispatch case, where a manual run can race an in-flight CI run.
 
 inputs:
   checks:
