@@ -150,6 +150,47 @@ about half the per-minute price for jobs that finish in under 30 seconds.
 6. Create `production` and `staging` GitHub Environments per repo, with required reviewers on
    production, and put the deploy secrets there.
 
+### The org ruleset
+
+Gates that are not *required* do not gate. Each org carries the same pair of
+rulesets, targeting `~DEFAULT_BRANCH` on that org's product repos:
+
+| Ruleset | Requires | Applies to |
+|---|---|---|
+| `ci-standard` | `typecheck`, `test`, `lint`, `hygiene`, `toolchain`, `Semgrep scan` | every product repo |
+| `ci-standard-db` | `migration-journal`, `migrate` | repos with a migration journal |
+
+Plus, in both: a pull request (zero approvals — the point is to make the checks
+run, not to add review ceremony), no force-push, no branch deletion, and an
+`OrganizationAdmin` bypass so a permanently-red check cannot lock the repo with
+no way out.
+
+Two things make this workable:
+
+**Check names are uniform.** Every repo names the same job the same way — that
+is why a single ruleset can cover four organizations. A repo whose lint job was
+called `Type-aware changed files` had to be renamed to `lint` to fit. Renaming a
+job silently removes it from the ruleset, so treat the names as an API.
+
+**Only require checks that always report.** A required check that a path filter
+can skip blocks the PR forever with *"Expected — Waiting for status to be
+reported"*. That is why `db-migrations.yml` carries no `paths:` filter, and why
+path-filtered or advisory jobs (coverage floors, prose lint, `continue-on-error`
+scanners) are deliberately **not** in the required set.
+
+**Create the ruleset disabled, activate after the workflows are on the default
+branch.** An active ruleset requiring checks that do not exist yet blocks the
+very pull requests that introduce them.
+
+```bash
+gh api --method PUT "orgs/$ORG/rulesets/$ID" -f enforcement=active
+```
+
+Merge queues are not enabled: `pr-policy` diffs against the merge base, which
+does not exist for `merge_group` events, so requiring it and enabling the queue
+at the same time would deadlock. Enable the queue only for the checks that run
+on `merge_group`.
+
 Organization secrets do not cross org boundaries. Set the bootstrap credentials
 (`COOLIFY_*`, `INFISICAL_*`, `TRIGGER_ACCESS_TOKEN`, registry tokens) as **organization** secrets
 scoped to the relevant repos, so rotation is one edit per org.
