@@ -19,9 +19,16 @@ on:
         type: string
         default: ""
       migrate-command:
-        description: Command that applies every migration using the real production migrator.
+        description: >-
+          Command that applies every migration using the real production migrator.
+          Empty SKIPS the replay — only correct for a repo with no baseline
+          migration, where the journal records deltas on top of a schema
+          `drizzle-kit push` created and a replay from empty fails on its very
+          first statement. That is structural; leaving the job to fail red
+          forever teaches everyone to ignore it. Document the reason at the call
+          site and link the squash issue.
         type: string
-        required: true
+        default: ""
       postgres-image:
         type: string
         default: postgres:17
@@ -58,6 +65,7 @@ jobs:
 
   replay:
     name: migrate
+    if: inputs.migrate-command != ''
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 15
     services:

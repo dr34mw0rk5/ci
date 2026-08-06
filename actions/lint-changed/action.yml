@@ -17,6 +17,13 @@ inputs:
   base-ref:
     description: Branch to diff against. Defaults to the pull request's base.
     default: ""
+  type-aware:
+    description: >-
+      Run oxlint's type-aware rules. Needs the oxlint-tsgolint sidecar declared
+      as a dependency — without it oxlint exits with "Failed to find tsgolint
+      executable", and a repo where it only ever arrived transitively passes
+      locally and fails in CI.
+    default: "false"
 
 runs:
   using: composite
@@ -26,6 +33,7 @@ runs:
       env:
         BASE_REF: ${{ inputs.base-ref || github.base_ref }}
         EXCLUDE: ${{ inputs.exclude }}
+        TYPE_AWARE: ${{ inputs.type-aware }}
       run: |
         set -euo pipefail
 
@@ -58,6 +66,9 @@ runs:
         lint_args=()
         if bunx oxlint --help 2>/dev/null | grep -q -- '--no-error-on-unmatched-pattern'; then
           lint_args+=( --no-error-on-unmatched-pattern )
+        fi
+        if [ "$TYPE_AWARE" = "true" ]; then
+          lint_args+=( --type-aware )
         fi
 
         bunx oxlint "${lint_args[@]}" "${changed[@]}"

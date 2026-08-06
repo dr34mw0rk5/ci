@@ -44,6 +44,13 @@ on:
         description: Newline-separated extra git pathspecs excluded from the changed-file lint.
         type: string
         default: ""
+      lint-type-aware:
+        description: >-
+          Run oxlint's type-aware rules in the lint job. Only turn this on in a
+          repo that declares oxlint-tsgolint — otherwise oxlint exits with
+          "Failed to find tsgolint executable".
+        type: boolean
+        default: false
       dependency-review:
         description: Run actions/dependency-review-action on pull requests (needs GitHub Advanced Security on private repos).
         type: boolean
@@ -107,6 +114,7 @@ jobs:
       - uses: dr34mw0rk5/ci/actions/lint-changed@v1
         with:
           exclude: ${{ inputs.lint-exclude }}
+          type-aware: ${{ inputs.lint-type-aware }}
 
   dependency-review:
     name: dependency-review

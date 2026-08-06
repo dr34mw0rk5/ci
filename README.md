@@ -308,5 +308,26 @@ unchanged.
 normally a breaking change — this one is not, because nothing called that workflow yet, and it is what
 makes the fleet's existing release gates keep matching.
 
+`v1.4.1` fixed the semgrep scan: it built its `--config` list with a bash array, but the job runs
+inside `semgrep/semgrep`, which ships no bash.
+
+`v1.5.0` made `migrate-command` optional (an empty value skips the replay — for a repo with no
+baseline migration, where a replay from empty cannot pass; see below), added `lint-type-aware` to
+`ci-bun.yml`, and added `sha-build-args` to `release-docker.yml` for Dockerfiles that read the commit
+under their own name.
+
+### A replay that cannot pass is worse than no replay
+
+`db-migrations.yml`'s `migrate` job replays every migration onto an empty Postgres. That only works if
+the journal starts from a baseline. A schema built with `drizzle-kit push`, with the journal recording
+only the deltas on top, has no migration that creates the base tables — so the first `ALTER TABLE`
+fails with `42P01 relation … does not exist`, forever, no matter how good the migrations are. Leaving
+that job red teaches everyone to ignore a check that exists to catch real breakage.
+
+Pass an empty `migrate-command` there, keep `journal-command` (the invariants it guards are what
+caught four migrations that had never run), and link the squash issue at the call site. Restoring the
+replay means generating one baseline from the current schema and recording it as already applied in
+every environment's `drizzle.__drizzle_migrations` — production state, not a code change.
+
 Breaking changes: removing an input, changing a default in a way that changes behaviour, or renaming
 a job (which renames the status check).

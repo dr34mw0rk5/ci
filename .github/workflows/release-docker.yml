@@ -57,6 +57,14 @@ on:
           Optional per entry: "build-args" (newline-separated), "platforms".
         type: string
         required: true
+      sha-build-args:
+        description: >-
+          Space-separated extra build-arg NAMES that receive the deploy SHA, for
+          images whose Dockerfile reads it under its own name (PRAXLY_RELEASE,
+          SENTRY_RELEASE, …). `GIT_SHA` is always passed. A name here, not a
+          value: the value cannot live in `images`, which is static JSON.
+        type: string
+        default: ""
       moving-tag:
         description: Moving tag applied alongside the immutable :<sha> tag.
         type: string
@@ -190,6 +198,24 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # build-args is composed here rather than inline: `images` is static JSON,
+      # so a per-image build-arg cannot carry the deploy SHA.
+      - name: Compose build args
+        id: args
+        env:
+          SHA: ${{ needs.gate.outputs.sha }}
+          EXTRA_NAMES: ${{ inputs.sha-build-args }}
+          MATRIX_ARGS: ${{ matrix.build-args }}
+        run: |
+          set -euo pipefail
+          {
+            echo "value<<__BUILD_ARGS__"
+            echo "GIT_SHA=${SHA}"
+            for name in $EXTRA_NAMES; do echo "${name}=${SHA}"; done
+            [ -n "$MATRIX_ARGS" ] && printf '%s\n' "$MATRIX_ARGS"
+            echo "__BUILD_ARGS__"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Setup Blacksmith builder
         if: inputs.blacksmith
         uses: useblacksmith/setup-docker-builder@6ff44f8e5255f9d8aa31ef22f7e57a2d926b7da0 # v1
@@ -207,9 +233,7 @@ jobs:
           file: ${{ matrix.file }}
           target: ${{ matrix.target || '' }}
           push: true
-          build-args: |
-            GIT_SHA=${{ needs.gate.outputs.sha }}
-            ${{ matrix.build-args }}
+          build-args: ${{ steps.args.outputs.value }}
           tags: |
             ${{ matrix.image }}:${{ needs.gate.outputs.sha }}
             ${{ matrix.image }}:${{ inputs.moving-tag }}
@@ -226,9 +250,7 @@ jobs:
           push: true
           cache-from: type=gha,scope=${{ matrix.name }}
           cache-to: type=gha,mode=max,scope=${{ matrix.name }}
-          build-args: |
-            GIT_SHA=${{ needs.gate.outputs.sha }}
-            ${{ matrix.build-args }}
+          build-args: ${{ steps.args.outputs.value }}
           tags: |
             ${{ matrix.image }}:${{ needs.gate.outputs.sha }}
             ${{ matrix.image }}:${{ inputs.moving-tag }}
