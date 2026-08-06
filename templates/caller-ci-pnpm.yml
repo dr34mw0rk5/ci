@@ -19,10 +19,13 @@ permissions:
 
 jobs:
   ci:
-    uses: dr34mw0rk5/ci/.github/workflows/ci-pnpm.yml@v1.4.0
-    # TURBO_TOKEN for the remote cache. `inherit` is the only way a reusable
-    # workflow sees a caller secret it does not declare individually.
-    secrets: inherit
+    uses: dr34mw0rk5/ci/.github/workflows/ci-pnpm.yml@v1.4.1
+    # Name the secrets. Never `secrets: inherit` here — this repository is
+    # public, so inherit hands it every secret the caller holds for the sake of
+    # one cache token. Semgrep's github-actions.security.secrets-inherit rule
+    # blocks it, correctly.
+    secrets:
+      TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
     with:
       # The check appears as "ci / <name>". `advisory` reports without failing —
       # for a backlog that has never been triaged, never for a required check.

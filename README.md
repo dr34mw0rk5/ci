@@ -6,8 +6,10 @@ Turborepo, Drizzle/Postgres, Docker images to GHCR, Coolify or Vercel as the dep
 > **Public on purpose.** Reusable workflows in a *private* repository can only be called by
 > repositories in the same organization, and our repos are spread across several orgs. This
 > repository therefore contains pipeline logic only — no secrets, no hostnames, no product code.
-> Secrets stay in each caller repo or its GitHub Environment and reach these workflows via
-> `secrets: inherit`. Keep it that way: nothing repo-specific belongs here.
+> Secrets stay in each caller repo or its GitHub Environment and are passed **by name**, never with
+> `secrets: inherit` — inherit would hand this public repository every secret the caller holds, and
+> Semgrep's `github-actions.security.secrets-inherit` rule blocks it. Keep it that way: nothing
+> repo-specific belongs here.
 
 ## Contents
 
