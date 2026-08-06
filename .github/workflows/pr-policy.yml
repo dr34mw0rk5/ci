@@ -1,5 +1,10 @@
 name: Pull Request Policy
 
+# Safe to call from a workflow that also runs on merge_group or push: the base
+# ref is resolved per event rather than read straight off `github.base_ref`,
+# which only pull_request populates. Callers that stay pull_request-only are
+# unaffected.
+
 on:
   workflow_call:
     inputs:
@@ -28,17 +33,37 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
+          # The diff-scoped steps below need the merge base; a depth-1 checkout
+          # cannot reach it.
           fetch-depth: 0
+
+      # `github.base_ref` is only populated for pull_request. merge_group carries
+      # its own base, and push/workflow_dispatch have none — there the range
+      # collapses to origin/<default>...HEAD, which is empty on the branch itself.
+      # Without this the job does not merely skip on a push: `origin/...HEAD` is
+      # not a valid range and git exits non-zero.
+      - name: Resolve base ref
+        id: base
+        env:
+          PR_BASE: ${{ github.base_ref }}
+          MERGE_GROUP_BASE: ${{ github.event.merge_group.base_ref }}
+          DEFAULT_BASE: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          base="${PR_BASE:-${MERGE_GROUP_BASE:-$DEFAULT_BASE}}"
+          base="${base#refs/heads/}"
+          git fetch --no-tags origin "$base"
+          echo "ref=$base" >>"$GITHUB_OUTPUT"
 
       - name: Reject whitespace errors
         env:
-          BASE_REF: ${{ github.base_ref }}
+          BASE_REF: ${{ steps.base.outputs.ref }}
         run: git diff --check "origin/${BASE_REF}...HEAD"
 
       # A tracked .env is unrecoverable — rewriting history does not un-leak it.
       - name: Reject newly tracked environment files
         env:
-          BASE_REF: ${{ github.base_ref }}
+          BASE_REF: ${{ steps.base.outputs.ref }}
         run: |
           set -euo pipefail
           offenders="$({

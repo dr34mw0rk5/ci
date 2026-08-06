@@ -64,7 +64,7 @@ permissions:
 
 jobs:
   ci:
-    uses: dr34mw0rk5/ci/.github/workflows/ci-bun.yml@v1.3.0
+    uses: dr34mw0rk5/ci/.github/workflows/ci-bun.yml@v1.4.0
     with:
       runner: blacksmith-4vcpu-ubuntu-2404
       tasks: >-
