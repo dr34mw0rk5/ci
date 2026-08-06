@@ -101,9 +101,15 @@ on:
         type: string
         default: ""
       attest:
-        description: Publish build provenance attestations for each image.
+        description: >-
+          Publish build provenance attestations for each image. OFF by default:
+          on a private repository the attestation API answers "Feature not
+          available for the <org> organization. To enable this feature, please
+          upgrade the billing plan, or make this repository public", and the
+          build job fails *after* pushing the image — a release that is half
+          done. Turn it on for public repos, or once the plan covers it.
         type: boolean
-        default: true
+        default: false
     secrets:
       COOLIFY_WEBHOOK_URL:
         required: true
