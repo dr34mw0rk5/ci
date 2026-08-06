@@ -92,9 +92,16 @@ runs:
                   echo "::error::Coolify deployment $deployment_uuid ended as '$status'."
                   exit 1 ;;
               esac ;;
+            # Not fatal. The webhook already accepted the deployment, and the
+            # authoritative signal is the release check below — "the SHA is
+            # observably live" is strictly stronger than "Coolify says the
+            # rollout finished". Failing here would reject a release that is
+            # about to be proven good, over a token scope. It stays loud,
+            # because losing the early-failure signal means a broken rollout is
+            # only caught by the release timeout.
             401|403)
-              echo "::error::Coolify denied deployment-status access (HTTP $http_code). COOLIFY_TOKEN needs deployment read access."
-              exit 1 ;;
+              echo "::warning::Coolify denied deployment-status access (HTTP $http_code) — COOLIFY_TOKEN has no deployment read access. Skipping the rollout poll and going straight to the release check; a failed deployment will surface as a release timeout instead of a clear error."
+              break ;;
             000|404|429|5??)
               echo "deployment status not available yet (HTTP $http_code)" ;;
             *)
