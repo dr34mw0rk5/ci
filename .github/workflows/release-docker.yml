@@ -73,6 +73,14 @@ on:
         description: Use the Blacksmith docker builder instead of buildx + GHA cache.
         type: boolean
         default: false
+      free-disk-space:
+        description: >-
+          Reclaim ~30 GB on a GitHub-hosted runner before building. Needed for
+          images whose build exhausts the default 14 GB — it fails as an opaque
+          "no space left on device" mid-layer. Costs ~2 minutes, so leave it off
+          unless a build has actually run out.
+        type: boolean
+        default: false
       prune-build-cache:
         description: >-
           Prune buildkit cache older than 7 days after each build. On persistent
@@ -187,6 +195,17 @@ jobs:
       matrix:
         include: ${{ fromJSON(inputs.images) }}
     steps:
+      - name: Free disk space
+        if: inputs.free-disk-space
+        uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          swap-storage: true
+
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           ref: ${{ needs.gate.outputs.sha }}
