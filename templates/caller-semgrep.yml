@@ -1,0 +1,24 @@
+# .github/workflows/semgrep.yml — thin caller.
+#
+# PR + weekly cron, never on push: the push to main re-scans exactly what the PR
+# already scanned (~4,000 redundant runs/month on one repo). The cron is what
+# picks up newly published registry rules.
+# Check: "sast / semgrep".
+name: Semgrep
+
+on:
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "37 5 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sast:
+    uses: dr34mw0rk5/ci/.github/workflows/semgrep.yml@v1.2.0

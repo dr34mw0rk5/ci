@@ -22,6 +22,7 @@ Turborepo, Drizzle/Postgres, Docker images to GHCR, Coolify or Vercel as the dep
 | `.github/workflows/verify-release.yml` | reusable | poll public `/version` endpoints until they serve a SHA |
 | `actions/setup-bun` | composite | Bun pinned from `package.json#packageManager` + caches + install |
 | `actions/setup-pnpm` | composite | pnpm from `packageManager`, Node from `.nvmrc`, frozen install |
+| `actions/lint-changed` | composite | oxlint + oxfmt over the files a PR changes, not the whole repo |
 | `actions/wait-for-ci` | composite | refuse to release a commit whose required checks are not green |
 | `actions/deploy-coolify` | composite | webhook → deployment-status poll → release verification → smoke |
 | `templates/` | copy-paste | thin caller workflows, Dependabot and Renovate config |
@@ -63,18 +64,45 @@ permissions:
 
 jobs:
   ci:
-    uses: dr34mw0rk5/ci/.github/workflows/ci-bun.yml@v1.0.0
+    uses: dr34mw0rk5/ci/.github/workflows/ci-bun.yml@v1.2.0
     with:
+      runner: blacksmith-4vcpu-ubuntu-2404
       tasks: >-
         [
-          {"name": "typecheck", "run": "bun run typecheck --cache-dir=.turbo --concurrency=4"},
-          {"name": "test",      "run": "bun run test --cache-dir=.turbo"},
-          {"name": "audit",     "run": "bun audit --audit-level=high"}
+          {"name": "typecheck", "run": "bun run typecheck --cache-dir=.turbo"},
+          {"name": "test",      "run": "bun run test --cache-dir=.turbo", "runner": "blacksmith-2vcpu-ubuntu-2404"},
+          {"name": "audit",     "run": "bun audit --audit-level=high",    "runner": "blacksmith-2vcpu-ubuntu-2404", "advisory": "true"}
         ]
+      lint-changed: true
 ```
 
-Every entry in `tasks` becomes its own job, and therefore its own required status check. See
-`templates/` for full callers.
+Every entry in `tasks` becomes its own job, and therefore its own required status check. Optional
+per-task keys:
+
+| Key | Effect |
+|---|---|
+| `runner` | Overrides `runner` for that task alone. A 30-second naming or audit check does not belong on a 4 vCPU tier — it is about twice the per-minute price. |
+| `advisory` | `continue-on-error` for the task. For a backlog that would wedge every PR on day one (an untriaged `bun audit`, a typecheck seam being fixed). It can never fail, so it must never be a required check or sit in a release gate. |
+| `timeout` | Overrides `timeout-minutes` for that task. |
+
+`lint-changed: true` adds a `lint` job running `actions/lint-changed`: oxlint + oxfmt over the files
+the PR touches. A repo-wide lint is red on day one in all five repos, and a permanently red gate gets
+ignored — the enforceable gate is the changed set. It no-ops on `push`/`merge_group`, where there is
+no merge base, which is what keeps it reportable on every event and therefore safe to require.
+
+### One caller file per trigger shape
+
+`templates/` ships four callers, not one. They cannot be merged into a single `ci.yml`: `pr-policy`
+diffs against the merge base and must stay `pull_request`-only (on a push `github.base_ref` is empty
+and `git diff origin/...HEAD` fails outright), and `semgrep` is PR + weekly cron because re-scanning
+the push to main duplicates the scan the PR already passed.
+
+| File | Caller job | Checks |
+|---|---|---|
+| `ci.yml` | `ci` | `ci / typecheck`, `ci / test`, `ci / lint`, … one per task |
+| `pr-policy.yml` | `policy` | `policy / hygiene`, `policy / toolchain` |
+| `semgrep.yml` | `sast` | `sast / semgrep` |
+| `db.yml` | `db` | `db / journal`, `db / replay` |
 
 ### Check-run names are an API
 
@@ -157,8 +185,14 @@ rulesets, targeting `~DEFAULT_BRANCH` on that org's product repos:
 
 | Ruleset | Requires | Applies to |
 |---|---|---|
-| `ci-standard` | `typecheck`, `test`, `lint`, `hygiene`, `toolchain`, `Semgrep scan` | every product repo |
-| `ci-standard-db` | `migration-journal`, `migrate` | repos with a migration journal |
+| `ci-standard` | `ci / typecheck`, `ci / test`, `ci / lint`, `policy / hygiene`, `policy / toolchain`, `sast / semgrep` | every product repo |
+| `ci-standard-db` | `db / journal`, `db / replay` | repos with a migration journal |
+
+**Migrating a repo renames every one of its checks.** Self-contained workflows reported `typecheck`;
+under a caller the same job reports `ci / typecheck`. The ruleset must be updated in the same change,
+or the PR that introduces the caller waits forever on a check name nothing will ever report again.
+Update the ruleset first: the migrating PR then satisfies it immediately, and only the other open PRs
+— which still emit the old names — need a rebase.
 
 Plus, in both: a pull request (zero approvals — the point is to make the checks
 run, not to add review ceremony), no force-push, no branch deletion, and an
@@ -254,6 +288,10 @@ script using non-null assertions fails in any repo that bans them.
 
 - `v1` — moving tag, latest compatible release.
 - `v1.2.3` — immutable. Preferred, because Dependabot then raises a visible PR per change.
+
+`v1.2.0` added the per-task `runner`/`advisory`/`timeout` keys, `lint-changed` + `actions/lint-changed`,
+and split `templates/` into one caller per trigger shape. All additive: a `v1.1.x` caller keeps working
+unchanged.
 
 Breaking changes: removing an input, changing a default in a way that changes behaviour, or renaming
 a job (which renames the status check).

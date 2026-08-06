@@ -1,0 +1,64 @@
+name: Lint changed files
+description: oxlint + oxfmt over the files this pull request changes, not the whole repository.
+
+# A repo-wide `oxlint . && oxfmt --check` is red on day one in every one of these
+# repositories, and a permanently red gate gets ignored (kaitosec carried one for
+# months as a "known-red baseline"). Holding NEW code to the standard is
+# enforceable today; the backlog is a separate, schedulable cleanup.
+#
+# On push and merge_group there is no merge base to diff against, so this is a
+# no-op there — which is what keeps the check reportable on every event and
+# therefore safe to require.
+
+inputs:
+  exclude:
+    description: Newline-separated extra git pathspecs to exclude, e.g. "**/*.gen.ts".
+    default: ""
+  base-ref:
+    description: Branch to diff against. Defaults to the pull request's base.
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Lint and format-check changed files
+      shell: bash
+      env:
+        BASE_REF: ${{ inputs.base-ref || github.base_ref }}
+        EXCLUDE: ${{ inputs.exclude }}
+      run: |
+        set -euo pipefail
+
+        if [ -z "${BASE_REF}" ]; then
+          echo "No merge base for this event — nothing to diff."
+          exit 0
+        fi
+
+        pathspecs=( '*.ts' '*.tsx' '*.js' '*.jsx' '*.mjs' '*.cjs'
+                    ':!**/*.gen.ts' ':!**/routeTree.gen.ts' )
+        while IFS= read -r extra; do
+          [ -n "$extra" ] && pathspecs+=( ":!${extra}" )
+        done <<<"$EXCLUDE"
+
+        changed=()
+        while IFS= read -r -d '' file; do changed+=("$file"); done < <(
+          git diff --name-only --diff-filter=ACMR -z "origin/${BASE_REF}...HEAD" -- "${pathspecs[@]}"
+        )
+
+        if [ "${#changed[@]}" -eq 0 ]; then
+          echo "No changed source files."
+          exit 0
+        fi
+        printf 'linting %d file(s)\n' "${#changed[@]}"
+
+        # `--no-error-on-unmatched-pattern` is accepted by oxlint 1.68 and rejected
+        # outright by 1.53, and the version comes from each repo's lockfile — so the
+        # flag has to be probed, not assumed. Without it, a PR that only touches
+        # files oxlint ignores fails on an empty pattern set.
+        lint_args=()
+        if bunx oxlint --help 2>/dev/null | grep -q -- '--no-error-on-unmatched-pattern'; then
+          lint_args+=( --no-error-on-unmatched-pattern )
+        fi
+
+        bunx oxlint "${lint_args[@]}" "${changed[@]}"
+        bunx oxfmt --check "${changed[@]}"

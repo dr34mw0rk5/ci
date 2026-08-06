@@ -1,0 +1,31 @@
+# .github/workflows/db.yml — thin caller.
+#
+# No `paths:` filter on purpose: the release gate waits for these checks on the
+# deployed commit, and a filtered workflow reports nothing on a commit that does
+# not touch packages/db — the gate would then time out and fail a good deploy.
+# Checks: "db / journal", "db / replay".
+name: Database
+
+on:
+  pull_request:
+  merge_group:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: db-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+jobs:
+  db:
+    uses: dr34mw0rk5/ci/.github/workflows/db-migrations.yml@v1.2.0
+    with:
+      journal-command: bun run check-migration-journal
+      migrate-command: bun run packages/db/src/migrate.ts
+      # Keys the shared env schema demands but the migrator never reads.
+      extra-env: |
+        REDIS_URL=redis://localhost:6379

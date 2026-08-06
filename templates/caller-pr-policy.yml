@@ -1,0 +1,25 @@
+# .github/workflows/pr-policy.yml — thin caller.
+#
+# PR-only, and it has to stay that way: every job here diffs against the merge
+# base, which does not exist for push or merge_group events.
+# Checks: "policy / hygiene", "policy / toolchain".
+name: Pull Request Policy
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-policy-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  policy:
+    uses: dr34mw0rk5/ci/.github/workflows/pr-policy.yml@v1.2.0
+    with:
+      package-manager: bun
+      # Generated files are not reviewed by hand; an `eval(` inside one is not a
+      # dropper signal.
+      eval-allowlist: "**/*.gen.ts"

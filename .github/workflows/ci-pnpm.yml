@@ -9,7 +9,8 @@ on:
       tasks:
         description: >-
           JSON array of {"name", "run"} objects. One job, and therefore one status
-          check, per entry.
+          check, per entry. Optional per-entry keys: "runner", "advisory": "true"
+          (report but do not fail) and "timeout" (minutes).
         type: string
         default: >-
           [
@@ -42,8 +43,8 @@ env:
 jobs:
   check:
     name: ${{ matrix.name }}
-    runs-on: ${{ inputs.runner }}
-    timeout-minutes: ${{ inputs.timeout-minutes }}
+    runs-on: ${{ matrix.runner || inputs.runner }}
+    timeout-minutes: ${{ matrix.timeout || inputs.timeout-minutes }}
     strategy:
       fail-fast: false
       matrix:
@@ -57,7 +58,12 @@ jobs:
         with:
           install-args: ${{ inputs.install-args }}
 
+      # `advisory` exists for backlogs that would wedge every PR on day one — an
+      # audit whose findings have never been triaged, a task with no test files
+      # yet. It reports in the log and stays green, so it must never appear in a
+      # required-check set or a release gate.
       - name: ${{ matrix.name }}
+        continue-on-error: ${{ matrix.advisory == true || matrix.advisory == 'true' }}
         env:
           TASK_COMMAND: ${{ matrix.run }}
         run: bash -eo pipefail -c "$TASK_COMMAND"

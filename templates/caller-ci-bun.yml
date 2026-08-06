@@ -1,5 +1,10 @@
 # .github/workflows/ci.yml — thin caller for a Bun repo.
-# Replace the self-contained ci.yml with this once dr34mw0rk5/ci is published.
+#
+# One caller file per trigger shape, NOT one file calling everything. pr-policy
+# diffs against the merge base, which does not exist on push or merge_group, and
+# semgrep is PR + weekly cron only. Bundling them into this file means the policy
+# jobs fail on every push to the default branch.
+# See caller-pr-policy.yml, caller-semgrep.yml, caller-db.yml.
 name: CI
 
 on:
@@ -18,27 +23,15 @@ permissions:
 
 jobs:
   ci:
-    uses: dr34mw0rk5/ci/.github/workflows/ci-bun.yml@v1.0.0
+    uses: dr34mw0rk5/ci/.github/workflows/ci-bun.yml@v1.2.0
     with:
       runner: blacksmith-4vcpu-ubuntu-2404
       # One entry per required status check. The check appears as "ci / <name>".
+      # `runner` per task: short checks belong on the cheapest tier.
       tasks: >-
         [
-          {"name": "typecheck", "run": "bun run typecheck --cache-dir=.turbo --concurrency=4"},
-          {"name": "test",      "run": "bun run test --cache-dir=.turbo"},
-          {"name": "audit",     "run": "bun audit --audit-level=high"}
+          {"name": "typecheck", "run": "bun run typecheck --cache-dir=.turbo"},
+          {"name": "test",      "run": "bun run test --cache-dir=.turbo", "runner": "blacksmith-2vcpu-ubuntu-2404"},
+          {"name": "audit",     "run": "bun audit --audit-level=high",    "runner": "blacksmith-2vcpu-ubuntu-2404"}
         ]
-
-  policy:
-    uses: dr34mw0rk5/ci/.github/workflows/pr-policy.yml@v1.0.0
-    with:
-      package-manager: bun
-
-  sast:
-    uses: dr34mw0rk5/ci/.github/workflows/semgrep.yml@v1.0.0
-
-  db:
-    uses: dr34mw0rk5/ci/.github/workflows/db-migrations.yml@v1.0.0
-    with:
-      journal-command: bun run check-migration-journal
-      migrate-command: bun run packages/db/src/migrate.ts
+      lint-changed: true

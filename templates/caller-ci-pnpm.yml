@@ -1,4 +1,6 @@
 # .github/workflows/ci.yml — thin caller for a pnpm + Node repo.
+#
+# One caller file per trigger shape — see the note in caller-ci-bun.yml.
 name: CI
 
 on:
@@ -17,20 +19,18 @@ permissions:
 
 jobs:
   ci:
-    uses: dr34mw0rk5/ci/.github/workflows/ci-pnpm.yml@v1.0.0
+    uses: dr34mw0rk5/ci/.github/workflows/ci-pnpm.yml@v1.2.0
+    # TURBO_TOKEN for the remote cache. `inherit` is the only way a reusable
+    # workflow sees a caller secret it does not declare individually.
     secrets: inherit
-
-  policy:
-    uses: dr34mw0rk5/ci/.github/workflows/pr-policy.yml@v1.0.0
     with:
-      package-manager: pnpm
-
-  sast:
-    uses: dr34mw0rk5/ci/.github/workflows/semgrep.yml@v1.0.0
-
-  verify:
-    if: github.event_name == 'push'
-    uses: dr34mw0rk5/ci/.github/workflows/verify-release.yml@v1.0.0
-    with:
-      release-urls: https://example.com/api/version
-      smoke-urls: https://example.com/
+      # The check appears as "ci / <name>". `advisory` reports without failing —
+      # for a backlog that has never been triaged, never for a required check.
+      tasks: >-
+        [
+          {"name": "typecheck", "run": "pnpm turbo run typecheck"},
+          {"name": "lint",      "run": "pnpm lint"},
+          {"name": "format",    "run": "pnpm exec oxfmt --check"},
+          {"name": "test",      "run": "pnpm turbo run test"},
+          {"name": "audit",     "run": "pnpm audit --audit-level high", "advisory": "true"}
+        ]
