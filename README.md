@@ -92,10 +92,14 @@ no merge base, which is what keeps it reportable on every event and therefore sa
 
 ### One caller file per trigger shape
 
-`templates/` ships four callers, not one. They cannot be merged into a single `ci.yml`: `pr-policy`
-diffs against the merge base and must stay `pull_request`-only (on a push `github.base_ref` is empty
-and `git diff origin/...HEAD` fails outright), and `semgrep` is PR + weekly cron because re-scanning
-the push to main duplicates the scan the PR already passed.
+`templates/` ships four callers, not one, because the triggers genuinely differ: `pr-policy` is
+`pull_request`-only (its findings are about what a PR adds), and `semgrep` is PR + weekly cron because
+re-scanning the push to main duplicates the scan the PR already passed. Bundling them into `ci.yml`
+would run both on every push to the default branch.
+
+Since `v1.4.0` a caller *may* extend `pr-policy` to `merge_group`/`push` — it resolves the base ref
+per event rather than reading `github.base_ref`, which only `pull_request` populates. Before that the
+job did not skip on a push, it failed: `origin/...HEAD` is a parse error, not an empty range.
 
 | File | Caller job | Checks |
 |---|---|---|
