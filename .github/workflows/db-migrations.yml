@@ -34,8 +34,12 @@ permissions:
   contents: read
 
 jobs:
+  # The job names are the fleet's existing check names, not `journal`/`replay`.
+  # Every release gate matches check runs with `grep -F "<name>|"`, so a rename
+  # here silently stops matching: `db / replay` does not contain `migrate|`, and
+  # the deploy would wait 30 minutes and then fail a perfectly good commit.
   journal:
-    name: journal
+    name: migration-journal
     if: inputs.journal-command != ''
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 10
@@ -53,7 +57,7 @@ jobs:
         run: bash -eo pipefail -c "$TASK_COMMAND"
 
   replay:
-    name: replay
+    name: migrate
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 15
     services:

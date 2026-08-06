@@ -64,7 +64,7 @@ permissions:
 
 jobs:
   ci:
-    uses: dr34mw0rk5/ci/.github/workflows/ci-bun.yml@v1.2.0
+    uses: dr34mw0rk5/ci/.github/workflows/ci-bun.yml@v1.3.0
     with:
       runner: blacksmith-4vcpu-ubuntu-2404
       tasks: >-
@@ -102,7 +102,7 @@ the push to main duplicates the scan the PR already passed.
 | `ci.yml` | `ci` | `ci / typecheck`, `ci / test`, `ci / lint`, … one per task |
 | `pr-policy.yml` | `policy` | `policy / hygiene`, `policy / toolchain` |
 | `semgrep.yml` | `sast` | `sast / semgrep` |
-| `db.yml` | `db` | `db / journal`, `db / replay` |
+| `db.yml` | `db` | `db / migration-journal`, `db / migrate` |
 
 ### Check-run names are an API
 
@@ -110,6 +110,11 @@ Branch protection, `wait-for-ci` and the merge queue all match on job names. Ren
 disables the gate that referenced it. Under a reusable workflow the name becomes
 `<caller-job-id> / <job-name>` — e.g. `ci / typecheck`. `wait-for-ci` matches by substring, so
 `typecheck` keeps matching after a migration; branch-protection entries must be updated by hand.
+
+The substring is anchored at the end (`grep -F "<name>|"` against `<name>|<status>|<conclusion>`), so
+a gate on `migrate` matches `db / migrate` but nothing named `db / replay`. That is why
+`db-migrations.yml` names its jobs `migration-journal` and `migrate` — the names five release gates
+were already written against — rather than the shorter `journal`/`replay`.
 
 ## Runner cost, and the correctness that comes with it
 
@@ -186,7 +191,7 @@ rulesets, targeting `~DEFAULT_BRANCH` on that org's product repos:
 | Ruleset | Requires | Applies to |
 |---|---|---|
 | `ci-standard` | `ci / typecheck`, `ci / test`, `ci / lint`, `policy / hygiene`, `policy / toolchain`, `sast / semgrep` | every product repo |
-| `ci-standard-db` | `db / journal`, `db / replay` | repos with a migration journal |
+| `ci-standard-db` | `db / migration-journal`, `db / migrate` | repos with a migration journal |
 
 **Migrating a repo renames every one of its checks.** Self-contained workflows reported `typecheck`;
 under a caller the same job reports `ci / typecheck`. The ruleset must be updated in the same change,
@@ -292,6 +297,10 @@ script using non-null assertions fails in any repo that bans them.
 `v1.2.0` added the per-task `runner`/`advisory`/`timeout` keys, `lint-changed` + `actions/lint-changed`,
 and split `templates/` into one caller per trigger shape. All additive: a `v1.1.x` caller keeps working
 unchanged.
+
+`v1.3.0` renamed `db-migrations.yml`'s jobs to `migration-journal` and `migrate`. A job rename is
+normally a breaking change — this one is not, because nothing called that workflow yet, and it is what
+makes the fleet's existing release gates keep matching.
 
 Breaking changes: removing an input, changing a default in a way that changes behaviour, or renaming
 a job (which renames the status check).

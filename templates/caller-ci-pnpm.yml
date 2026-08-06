@@ -19,7 +19,7 @@ permissions:
 
 jobs:
   ci:
-    uses: dr34mw0rk5/ci/.github/workflows/ci-pnpm.yml@v1.2.0
+    uses: dr34mw0rk5/ci/.github/workflows/ci-pnpm.yml@v1.3.0
     # TURBO_TOKEN for the remote cache. `inherit` is the only way a reusable
     # workflow sees a caller secret it does not declare individually.
     secrets: inherit

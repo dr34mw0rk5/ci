@@ -22,7 +22,7 @@ permissions:
 
 jobs:
   db:
-    uses: dr34mw0rk5/ci/.github/workflows/db-migrations.yml@v1.2.0
+    uses: dr34mw0rk5/ci/.github/workflows/db-migrations.yml@v1.3.0
     with:
       journal-command: bun run check-migration-journal
       migrate-command: bun run packages/db/src/migrate.ts

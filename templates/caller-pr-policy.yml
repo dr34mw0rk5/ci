@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   policy:
-    uses: dr34mw0rk5/ci/.github/workflows/pr-policy.yml@v1.2.0
+    uses: dr34mw0rk5/ci/.github/workflows/pr-policy.yml@v1.3.0
     with:
       package-manager: bun
       # Generated files are not reviewed by hand; an `eval(` inside one is not a

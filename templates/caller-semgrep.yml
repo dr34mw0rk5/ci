@@ -21,4 +21,4 @@ concurrency:
 
 jobs:
   sast:
-    uses: dr34mw0rk5/ci/.github/workflows/semgrep.yml@v1.2.0
+    uses: dr34mw0rk5/ci/.github/workflows/semgrep.yml@v1.3.0
