@@ -4,6 +4,9 @@ name: Verify release
 # Coolify app redeployed by something else. Vercel builds independently of Actions,
 # so a red CI does not stop a production deploy; branch protection is the gate and
 # this workflow is the receipt.
+#
+# The logic lives in actions/verify-release, so a workflow that already has a
+# deploy job can verify in-place with the same code instead of copying it.
 
 on:
   workflow_call:
@@ -35,48 +38,9 @@ jobs:
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 25
     steps:
-      - name: Wait until the deployed commit is live
-        env:
-          RELEASE_URLS: ${{ inputs.release-urls }}
-          EXPECTED_VERSION: ${{ inputs.expected-version }}
-          TIMEOUT: ${{ inputs.timeout-seconds }}
-        run: |
-          set -euo pipefail
-          pending() {
-            local out="" url body live
-            while IFS= read -r url; do
-              [ -z "$url" ] && continue
-              body=$(curl --silent --max-time 15 --header 'Cache-Control: no-cache' \
-                "${url}?release=${EXPECTED_VERSION}" || true)
-              live=$(jq -r '.commit // .version // "unavailable"' <<<"$body" 2>/dev/null || echo unavailable)
-              [ "$live" != "$EXPECTED_VERSION" ] && out="${out}${url}=${live} "
-            done <<<"$RELEASE_URLS"
-            printf '%s' "$out"
-          }
-          deadline=$((SECONDS + TIMEOUT))
-          last=""
-          while [ "$SECONDS" -lt "$deadline" ]; do
-            p=$(pending)
-            if [ -z "$p" ]; then echo "Release $EXPECTED_VERSION is live everywhere."; exit 0; fi
-            if [ "$p" != "$last" ]; then echo "waiting for: $p"; last="$p"; fi
-            sleep 15
-          done
-          echo "::error::$EXPECTED_VERSION never went live. Still pending: $last"
-          exit 1
-
-      - name: Smoke
-        if: inputs.smoke-urls != ''
-        env:
-          SMOKE_URLS: ${{ inputs.smoke-urls }}
-        run: |
-          set -euo pipefail
-          fail=0
-          while IFS= read -r url; do
-            [ -z "$url" ] && continue
-            code=$(curl --silent --output /dev/null --write-out '%{http_code}' \
-              --max-time 15 --retry 3 --retry-delay 5 "$url" || echo 000)
-            if [ "$code" = "200" ]; then echo "OK  $url"; else
-              echo "::error::$url answered HTTP $code."; fail=1
-            fi
-          done <<<"$SMOKE_URLS"
-          exit $fail
+      - uses: dr34mw0rk5/ci/actions/verify-release@v1
+        with:
+          expected-version: ${{ inputs.expected-version }}
+          release-urls: ${{ inputs.release-urls }}
+          smoke-urls: ${{ inputs.smoke-urls }}
+          timeout-seconds: ${{ inputs.timeout-seconds }}

@@ -24,6 +24,7 @@ Turborepo, Drizzle/Postgres, Docker images to GHCR, Coolify or Vercel as the dep
 | `.github/workflows/verify-release.yml` | reusable | poll public `/version` endpoints until they serve a SHA |
 | `actions/setup-bun` | composite | Bun pinned from `package.json#packageManager` + caches + install |
 | `actions/setup-pnpm` | composite | pnpm from `packageManager`, Node from `.nvmrc`, frozen install |
+| `actions/verify-release` | composite | hold until every manifest reports the commit, then smoke |
 | `actions/lint-changed` | composite | oxlint + oxfmt over the files a PR changes, not the whole repo |
 | `actions/wait-for-ci` | composite | refuse to release a commit whose required checks are not green |
 | `actions/deploy-coolify` | composite | webhook → deployment-status poll → release verification → smoke |

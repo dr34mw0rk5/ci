@@ -1,0 +1,115 @@
+name: Verify release
+description: Hold until every public manifest reports the expected commit, then smoke-test.
+
+# A deploy is not done when the tool that performed it exits 0 — `wrangler
+# deploy` returns before the new Worker is serving everywhere, and a Coolify
+# webhook returning 200 only means the rollout was queued. It is done when the
+# commit that was built is observably the commit being served.
+#
+# The same logic runs from a job step (this action) and from the shared
+# verify-release.yml workflow, which delegates here, so there is one
+# implementation rather than one per repository.
+
+inputs:
+  expected-version:
+    description: Release version every manifest must report (normally github.sha).
+    required: true
+  release-urls:
+    description: >-
+      Newline-separated manifest URLs, one per deployed app — a missing entry
+      means a dead app reports success. Each must be absolute: a relative URL is
+      how an unset repository variable or an empty `wrangler` output slips
+      through as "waiting…" until the timeout.
+    required: true
+  smoke-urls:
+    description: Newline-separated URLs that must answer HTTP 200 once the release is live. Optional.
+    default: ""
+  timeout-seconds:
+    description: How long the new version may take to appear on every release URL.
+    default: "900"
+  label:
+    description: Name used in log lines and the job summary. Optional.
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Wait until the release is live
+      shell: bash
+      env:
+        EXPECTED_VERSION: ${{ inputs.expected-version }}
+        RELEASE_URLS: ${{ inputs.release-urls }}
+        TIMEOUT: ${{ inputs.timeout-seconds }}
+        LABEL: ${{ inputs.label }}
+      run: |
+        set -euo pipefail
+
+        urls=()
+        while IFS= read -r url; do
+          url="$(printf '%s' "$url" | tr -d '[:space:]')"
+          [ -z "$url" ] && continue
+          case "$url" in
+            http://*|https://*) urls+=( "$url" ) ;;
+            *)
+              echo "::error::Release URL '${url}' is not absolute${LABEL:+ (${LABEL})} — the host is probably an unset variable or an empty deploy output."
+              exit 1
+              ;;
+          esac
+        done <<<"$RELEASE_URLS"
+
+        if [ "${#urls[@]}" -eq 0 ]; then
+          echo "::error::No release URLs given${LABEL:+ for ${LABEL}}. A verification with nothing to verify passes for the wrong reason."
+          exit 1
+        fi
+
+        # Accepts both shapes of the version contract: {"commit": …} from
+        # servers, {"version": …} from SPA build-time manifests.
+        pending() {
+          local out="" url body live
+          for url in "${urls[@]}"; do
+            body=$(curl --silent --max-time 20 --header 'Cache-Control: no-cache' \
+              "${url}?release=${EXPECTED_VERSION}" || true)
+            live=$(jq -r '.commit // .version // "unavailable"' <<<"$body" 2>/dev/null || echo unavailable)
+            [ "$live" != "$EXPECTED_VERSION" ] && out="${out}${url}=${live} "
+          done
+          printf '%s' "$out"
+        }
+
+        deadline=$((SECONDS + TIMEOUT))
+        last=""
+        while [ "$SECONDS" -lt "$deadline" ]; do
+          p="$(pending)"
+          if [ -z "$p" ]; then
+            echo "${LABEL:-Release} ${EXPECTED_VERSION} is live on every endpoint."
+            for url in "${urls[@]}"; do
+              echo "${LABEL:+${LABEL} → }${url} (${EXPECTED_VERSION})" >> "$GITHUB_STEP_SUMMARY"
+            done
+            exit 0
+          fi
+          if [ "$p" != "$last" ]; then echo "waiting for: $p"; last="$p"; fi
+          sleep 15
+        done
+
+        echo "::error::${LABEL:+${LABEL}: }${EXPECTED_VERSION} never went live. Still pending: ${last}"
+        exit 1
+
+    # A booted-but-broken app answers its version manifest fine, which is why
+    # this pass exists at all.
+    - name: Smoke
+      if: inputs.smoke-urls != ''
+      shell: bash
+      env:
+        SMOKE_URLS: ${{ inputs.smoke-urls }}
+      run: |
+        set -euo pipefail
+        fail=0
+        while IFS= read -r url; do
+          url="$(printf '%s' "$url" | tr -d '[:space:]')"
+          [ -z "$url" ] && continue
+          code=$(curl --silent --output /dev/null --write-out '%{http_code}' \
+            --max-time 15 --retry 3 --retry-delay 5 "$url" || echo 000)
+          if [ "$code" = "200" ]; then echo "OK  $url"; else
+            echo "::error::$url answered HTTP $code."; fail=1
+          fi
+        done <<<"$SMOKE_URLS"
+        exit $fail
