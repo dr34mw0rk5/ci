@@ -113,6 +113,12 @@ on:
       deployed:
         description: "true when a build and deploy actually ran."
         value: ${{ jobs.gate.outputs.deploy }}
+      sha:
+        description: >-
+          The commit that was released. Under workflow_run this is the
+          triggering run's head_sha, NOT github.sha — a caller job that runs
+          anything against the released image must use this.
+        value: ${{ jobs.gate.outputs.sha }}
 
 permissions:
   contents: read
