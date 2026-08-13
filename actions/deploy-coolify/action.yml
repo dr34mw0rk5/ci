@@ -67,7 +67,7 @@ runs:
           exit 0
         fi
 
-        response=$(curl --silent --fail --show-error --request GET \
+        response=$(curl --silent --fail --show-error --request POST \
           "$COOLIFY_WEBHOOK_URL" --header "Authorization: Bearer $COOLIFY_TOKEN")
         deployment_uuid=$(jq -er '.deployments[0].deployment_uuid // .deployment_uuid' <<<"$response")
         api_origin=$(sed -E 's#(https?://[^/]+).*#\1#' <<<"$COOLIFY_WEBHOOK_URL")
