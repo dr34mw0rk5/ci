@@ -163,6 +163,18 @@ without bound — that is where the 135 GB-months came from.
 `prune-build-cache` (on by default) drops layers older than 7 days after each
 build, best-effort so a prune failure cannot fail a pushed image.
 
+**Keep the layer cache out of the Actions cache.** On buildx the default
+`buildx-cache: gha` writes `mode=max` layers into the *calling* repository's
+Actions cache, which is capped at 10 GB per repo and evicted LRU. Measured on
+procuris: 154 `buildkit-blob-*` entries held 9.91 GB of a 10.70 GB total, so the
+758 MB Bun dependency cache sat permanently on the eviction edge and every CI
+job paid a cold `bun install` — 85s of a 158s job, five parallel jobs, 313 runs
+a month. The bill lands on CI, not on the release, which is why no per-workflow
+breakdown points at it. Set `buildx-cache: registry` to store the same
+`mode=max` cache at `<image>:buildcache` instead; it needs no extra secret and
+does not count against the Actions cache. Check `gh api
+repos/OWNER/REPO/actions/cache/usage` before assuming a repo is fine.
+
 **Advisory scanners run on PRs only.** Re-running Semgrep and similar on the
 push to main duplicates the scan the PR already passed — ~4,000 redundant runs
 a month on that repo. Keep a weekly cron so newly published registry rules
