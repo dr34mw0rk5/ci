@@ -88,6 +88,25 @@ on:
           repo billed 135 GB-months before this was added.
         type: boolean
         default: true
+      buildx-cache:
+        description: >-
+          Where the buildx layer cache lives: "gha", "registry" or "off". Ignored
+          when `blacksmith` is set — that builder keeps its own sticky-disk cache.
+
+          "gha" (the default, unchanged) writes to the *calling* repository's
+          Actions cache, which is capped at 10 GB per repo and evicted LRU. With
+          mode=max a multi-stage image caches every intermediate layer, so one
+          server image is enough to fill that cap on its own and start evicting
+          the dependency cache every other job in the repo restores — a cost that
+          lands on CI, not here, and does not show up in this workflow's timings.
+
+          "registry" stores the same mode=max cache at <image>:buildcache in the
+          registry the image already publishes to, which does not count against
+          the Actions cache. Needs packages:write, which the build job already
+          holds. A missing buildcache tag is a cache miss, not an error, so the
+          first build after switching is cold.
+        type: string
+        default: gha
       environment:
         description: GitHub Environment guarding the deploy job.
         type: string
@@ -207,6 +226,18 @@ jobs:
       matrix:
         include: ${{ fromJSON(inputs.images) }}
     steps:
+      # Fail loudly on a typo: the cache arguments below resolve an unknown value
+      # to an empty string, which builds fine and silently caches nothing.
+      - name: Validate buildx-cache
+        if: ${{ !inputs.blacksmith }}
+        env:
+          MODE: ${{ inputs.buildx-cache }}
+        run: |
+          case "$MODE" in
+            gha|registry|off) ;;
+            *) echo "::error::buildx-cache must be gha, registry or off (got '$MODE')"; exit 1 ;;
+          esac
+
       - name: Free disk space
         if: inputs.free-disk-space
         uses: jlumbroso/free-disk-space@54081f138730dfa15788a46383842cd2f914a1be # v1.3.1
@@ -279,8 +310,21 @@ jobs:
           target: ${{ matrix.target || '' }}
           platforms: ${{ matrix.platforms || 'linux/amd64' }}
           push: true
-          cache-from: type=gha,scope=${{ matrix.name }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+          # See the `buildx-cache` input. An unrecognised value cannot reach here
+          # — the validation step above rejects it — so the final `|| ''` is the
+          # "off" branch, which build-push-action reads as no cache at all.
+          cache-from: >-
+            ${{ inputs.buildx-cache == 'registry'
+              && format('type=registry,ref={0}:buildcache', matrix.image)
+              || inputs.buildx-cache == 'gha'
+              && format('type=gha,scope={0}', matrix.name)
+              || '' }}
+          cache-to: >-
+            ${{ inputs.buildx-cache == 'registry'
+              && format('type=registry,ref={0}:buildcache,mode=max', matrix.image)
+              || inputs.buildx-cache == 'gha'
+              && format('type=gha,mode=max,scope={0}', matrix.name)
+              || '' }}
           build-args: ${{ steps.args.outputs.value }}
           tags: |
             ${{ matrix.image }}:${{ needs.gate.outputs.sha }}
