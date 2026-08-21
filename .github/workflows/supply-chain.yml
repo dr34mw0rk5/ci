@@ -1,0 +1,55 @@
+name: Supply Chain
+
+# The same payload rules pr-policy runs, on a trigger that actually covers every
+# branch.
+#
+# pr-policy is pull_request-only by design: most of its checks diff against the
+# merge base, which does not exist otherwise. That is correct for whitespace and
+# newly tracked .env files — a branch nobody proposes cannot leak anything into
+# the default branch.
+#
+# It is not correct for an injected loader. In August 2026 one sat in eleven
+# branches of a product repo for two weeks. pr-policy failed on the four that had
+# a pull request, exactly as intended; those pull requests then sat red and
+# untriaged. The other seven never had one, so nothing ever looked at them, and
+# the payload was only found by hand.
+#
+# So this workflow judges the working tree instead of a diff and is meant to be
+# called `on: push`. It installs nothing and reads nothing but the checkout,
+# which is what keeps it trustworthy while a dependency is the suspect.
+#
+# Check name: "supply-chain / scan".
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        type: string
+        default: ubuntu-latest
+      eval-allowlist:
+        description: >-
+          Newline-separated git pathspecs excluded from the dropper rules, for
+          files that legitimately need eval.
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    name: scan
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 5
+    steps:
+      # Depth 1 on purpose: the scan reads the tree at this commit, not history.
+      # persist-credentials: false because nothing here needs to talk to the
+      # remote, and a scan job is the last place that should hold a token.
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: dr34mw0rk5/ci/actions/scan-payloads@v1
+        with:
+          eval-allowlist: ${{ inputs.eval-allowlist }}

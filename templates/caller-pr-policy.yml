@@ -1,7 +1,12 @@
 # .github/workflows/pr-policy.yml — thin caller.
 #
-# PR-only, and it has to stay that way: every job here diffs against the merge
-# base, which does not exist for push or merge_group events.
+# PR-only: the diff-scoped jobs here need a merge base, which push does not have.
+# That is fine for whitespace and newly tracked .env files — a branch nobody
+# proposes cannot leak them into the default branch.
+#
+# It is NOT fine for an injected payload, which sits in the tree regardless of
+# whether anyone opens a pull request. Those rules now live in
+# caller-supply-chain.yml, which runs on push for every branch. Install both.
 # Checks: "policy / hygiene", "policy / toolchain".
 name: Pull Request Policy
 

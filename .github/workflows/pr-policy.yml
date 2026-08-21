@@ -77,26 +77,12 @@ jobs:
             exit 1
           fi
 
-      # Dropper patterns from the Shai-Hulud / TronGrid class of npm worms: a
-      # NOTE: `eval(` must have no space before the paren. Allowing one matched
-      # English prose inside template literals ("...detection eval (per-kind...").
-      # large base64 blob handed to atob, a dynamic Function constructor, or a
-      # detached child process. Legitimate uses go in eval-allowlist.
-      - name: Reject obfuscated payload patterns
-        env:
-          EVAL_ALLOWLIST: ${{ inputs.eval-allowlist }}
-        run: |
-          set -euo pipefail
-          pathspecs=( '*.ts' '*.tsx' '*.js' '*.mjs' '*.cjs'
-                      ':!**/*.test.*' ':!**/*.spec.*' ':!**/dist/**' ':!**/build/**' )
-          while IFS= read -r extra; do
-            [ -n "$extra" ] && pathspecs+=( ":!${extra}" )
-          done <<<"$EVAL_ALLOWLIST"
-          if git grep -nE '(^|[^.[:alnum:]_])eval\(|\bnew[[:space:]]+Function[[:space:]]*\(|\batob[[:space:]]*\([[:space:]]*['"'"'"][A-Za-z0-9+/=]{200,}|child_process[[:space:]]*[)\.].*spawn.*detached' \
-              -- "${pathspecs[@]}"; then
-            echo "::error::Suspicious pattern (eval / new Function / large atob / detached spawn). Review it; if intentional, add the path to eval-allowlist."
-            exit 1
-          fi
+      # Extracted to a composite action so the identical rules can also run on
+      # push, where most of this repo's callers have no coverage at all. See
+      # actions/scan-payloads for what each rule catches and why.
+      - uses: dr34mw0rk5/ci/actions/scan-payloads@v1
+        with:
+          eval-allowlist: ${{ inputs.eval-allowlist }}
 
   toolchain:
     name: toolchain

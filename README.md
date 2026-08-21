@@ -17,7 +17,8 @@ Turborepo, Drizzle/Postgres, Docker images to GHCR, Coolify or Vercel as the dep
 |---|---|---|
 | `.github/workflows/ci-bun.yml` | reusable | typecheck / test / audit matrix for Bun repos |
 | `.github/workflows/ci-pnpm.yml` | reusable | the same, for pnpm + Node repos |
-| `.github/workflows/pr-policy.yml` | reusable | whitespace, tracked `.env`, obfuscated payloads, pinned toolchain |
+| `.github/workflows/pr-policy.yml` | reusable | whitespace, tracked `.env`, obfuscated payloads, pinned toolchain (PR-only) |
+| `.github/workflows/supply-chain.yml` | reusable | the payload rules, on push, for **every** branch |
 | `.github/workflows/semgrep.yml` | reusable | SAST scan |
 | `.github/workflows/db-migrations.yml` | reusable | journal invariants + replay every migration on an empty Postgres |
 | `.github/workflows/release-docker.yml` | reusable | gate on CI → build/push to GHCR → Coolify deploy → verify |
@@ -26,6 +27,7 @@ Turborepo, Drizzle/Postgres, Docker images to GHCR, Coolify or Vercel as the dep
 | `actions/setup-pnpm` | composite | pnpm from `packageManager`, Node from `.nvmrc`, frozen install |
 | `actions/verify-release` | composite | hold until every manifest reports the commit, then smoke |
 | `actions/lint-changed` | composite | oxlint + oxfmt over the files a PR changes, not the whole repo |
+| `actions/scan-payloads` | composite | dropper patterns + code hidden behind a long whitespace run |
 | `actions/wait-for-ci` | composite | refuse to release a commit whose required checks are not green |
 | `actions/deploy-coolify` | composite | webhook → deployment-status poll → release verification → smoke |
 | `templates/` | copy-paste | thin caller workflows, Dependabot and Renovate config |
@@ -95,10 +97,16 @@ no merge base, which is what keeps it reportable on every event and therefore sa
 
 ### One caller file per trigger shape
 
-`templates/` ships four callers, not one, because the triggers genuinely differ: `pr-policy` is
+`templates/` ships five callers, not one, because the triggers genuinely differ: `pr-policy` is
 `pull_request`-only (its findings are about what a PR adds), and `semgrep` is PR + weekly cron because
 re-scanning the push to main duplicates the scan the PR already passed. Bundling them into `ci.yml`
 would run both on every push to the default branch.
+
+`supply-chain` is the exception that proves the rule: it runs on **push, unfiltered**. An injected
+payload sits in the tree whether or not anyone opens a pull request, so a PR-only trigger cannot see
+it. In August 2026 a loader sat in eleven branches of a product repo for two weeks — `pr-policy`
+failed on the four that had a PR and those went untriaged; the other seven had no PR, so nothing ever
+looked at them. Narrowing that `push:` to the default branch reopens the same hole.
 
 Since `v1.4.0` a caller *may* extend `pr-policy` to `merge_group`/`push` — it resolves the base ref
 per event rather than reading `github.base_ref`, which only `pull_request` populates. Before that the
@@ -110,6 +118,7 @@ job did not skip on a push, it failed: `origin/...HEAD` is a parse error, not an
 | `pr-policy.yml` | `policy` | `policy / hygiene`, `policy / toolchain` |
 | `semgrep.yml` | `sast` | `sast / semgrep` |
 | `db.yml` | `db` | `db / migration-journal`, `db / migrate` |
+| `supply-chain.yml` | `supply-chain` | `supply-chain / scan` |
 
 ### Check-run names are an API
 
