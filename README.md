@@ -338,6 +338,19 @@ baseline migration, where a replay from empty cannot pass; see below), added `li
 `ci-bun.yml`, and added `sha-build-args` to `release-docker.yml` for Dockerfiles that read the commit
 under their own name.
 
+`v1.8.0` moved `pr-policy`'s payload rules into `actions/scan-payloads` and added `supply-chain.yml`,
+which runs them on push for every branch. Additive: a caller that only installs `pr-policy` keeps
+working and keeps its `eval-allowlist`. It exists because those rules only ever ran where a pull
+request did. An obfuscated loader sat in eleven branches of a product repo for two weeks — `pr-policy`
+failed on the four that had a PR and those went untriaged, and the other seven had no PR at all.
+
+The same release added a rule for how such a payload hides rather than what it calls: a run of 40+
+spaces mid-line followed by more content. Against the five files that carried that loader, the
+existing dropper patterns matched one — the only one using `eval(atob(...))` — and the padding rule
+matched all five, with no hits across ~900 other source files. It also survives re-obfuscation of
+whatever sits behind the padding. `eval-allowlist` deliberately does not suppress it: no generated
+file needs 40 spaces in the middle of a line.
+
 ### A replay that cannot pass is worse than no replay
 
 `db-migrations.yml`'s `migrate` job replays every migration onto an empty Postgres. That only works if
