@@ -1,0 +1,84 @@
+name: Scan for injected payloads
+description: Whole-tree scan for dropper patterns and for code hidden behind a long whitespace run.
+
+# Extracted from pr-policy's hygiene job so the same rules can also run on push.
+# That split is the point, not a tidy-up: in August 2026 an obfuscated loader sat
+# in eleven branches of one repo for two weeks. pr-policy caught it on the four
+# branches that had a pull request — and seven branches never had one, so nothing
+# ever looked at them.
+#
+# The scan is deliberately whole-tree rather than diff-scoped, needs no
+# dependency install, and reads nothing but the checkout. A supply-chain check
+# that first runs `bun install` is a check you cannot trust while a dependency is
+# what you suspect.
+#
+# Two rule groups, because they fail differently:
+#
+#   dropper      eval(, new Function(, a large base64 blob handed to atob, a
+#                detached child process. Catches payloads that announce
+#                themselves through the API they need.
+#
+#   concealment  a run of 40+ spaces mid-line followed by more content. Catches
+#                payloads that announce nothing. In the incident above the code
+#                was appended to the last line of a file behind ~700 spaces: off
+#                screen in any editor without wrapping and in GitHub's diff view,
+#                where it reads as a single modified line.
+#
+# Measured against that incident, on the five files that carried the loader:
+# the dropper rules alone caught one of five — only the file that used
+# eval(atob(...)). The other four carried the raw obfuscator with no eval, no
+# Function and no sizable atob. The concealment rule caught five of five, and
+# flagged nothing in the repository's ~900 other source files. It also survives
+# re-obfuscation of whatever sits behind the padding, which the API-shaped rules
+# do not.
+
+inputs:
+  eval-allowlist:
+    description: >-
+      Newline-separated git pathspecs excluded from the dropper rules, for files
+      that legitimately need eval. Does not apply to the concealment rule:
+      no generated file needs 40 spaces in the middle of a line.
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Reject obfuscated payload patterns
+      shell: bash
+      env:
+        EVAL_ALLOWLIST: ${{ inputs.eval-allowlist }}
+      run: |
+        set -euo pipefail
+        base=( '*.ts' '*.tsx' '*.js' '*.mjs' '*.cjs'
+               ':!**/*.test.*' ':!**/*.spec.*' ':!**/dist/**' ':!**/build/**' )
+
+        dropper=( "${base[@]}" )
+        while IFS= read -r extra; do
+          [ -n "$extra" ] && dropper+=( ":!${extra}" )
+        done <<<"$EVAL_ALLOWLIST"
+
+        status=0
+
+        # NOTE: `eval(` must have no space before the paren. Allowing one matched
+        # English prose inside template literals ("...detection eval (per-kind...").
+        if git grep -nE '(^|[^.[:alnum:]_])eval\(|\bnew[[:space:]]+Function[[:space:]]*\(|\batob[[:space:]]*\([[:space:]]*['"'"'"][A-Za-z0-9+/=]{200,}|child_process[[:space:]]*[)\.].*spawn.*detached' \
+            -- "${dropper[@]}"; then
+          echo "::error::Suspicious pattern (eval / new Function / large atob / detached spawn). Review it; if intentional, add the path to eval-allowlist."
+          status=1
+        fi
+
+        # Reported with a byte count rather than the match: printing the line
+        # would dump the payload into the log, and the line is thousands of
+        # characters wide.
+        if hits="$(git grep -lE '[^[:space:]][[:space:]]{40,}[^[:space:]]' -- "${base[@]}")" && [ -n "$hits" ]; then
+          echo "::error::Code hidden behind a long whitespace run — the signature of an injected loader, not a formatting slip:"
+          while IFS= read -r file; do
+            [ -n "$file" ] || continue
+            width="$(awk '{ if (length($0) > m) m = length($0) } END { print m }' "$file")"
+            echo "  ${file} (longest line ${width} characters)"
+          done <<<"$hits"
+          echo "Restore the file from a known-good revision. Editing the visible lines leaves the payload in place — that mistake has already been made once, in a commit titled \"remove the injected loader\"."
+          status=1
+        fi
+
+        exit "$status"

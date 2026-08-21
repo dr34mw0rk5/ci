@@ -1,0 +1,31 @@
+# .github/workflows/supply-chain.yml — thin caller.
+#
+# Runs on push for EVERY branch, which is the whole reason this is separate from
+# pr-policy. A branch without a pull request gets no policy coverage at all, and
+# that is precisely where an injected loader survived two weeks undetected.
+#
+# Keep the `push:` trigger unfiltered. Narrowing it to the default branch
+# reintroduces the gap this exists to close.
+# Check: "supply-chain / scan".
+name: Supply Chain
+
+on:
+  push:
+  pull_request:
+  merge_group:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: supply-chain-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != format('refs/heads/{0}', github.event.repository.default_branch) }}
+
+jobs:
+  supply-chain:
+    uses: dr34mw0rk5/ci/.github/workflows/supply-chain.yml@v1.8.0
+    with:
+      # Generated files are not written by hand; an `eval(` inside one is not a
+      # dropper signal. Does not apply to the concealment rule.
+      eval-allowlist: "**/*.gen.ts"
