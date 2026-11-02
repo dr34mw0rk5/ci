@@ -21,7 +21,9 @@ runs:
     - uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903 # v6.0.0
       with:
         node-version-file: .nvmrc
-        cache: pnpm
+        # The cache post step fails on a miss when no store exists, and without an
+        # install no store exists. A job that skips the install has nothing to cache.
+        cache: ${{ inputs.install == 'true' && 'pnpm' || '' }}
 
     - name: Verify the runtime matches the pins
       shell: bash
