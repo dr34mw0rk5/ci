@@ -366,3 +366,8 @@ every environment's `drizzle.__drizzle_migrations` — production state, not a c
 
 Breaking changes: removing an input, changing a default in a way that changes behaviour, or renaming
 a job (which renames the status check).
+
+`v1.8.1` stopped `setup-pnpm` from enabling setup-node's pnpm cache when `install` is `"false"`. With no
+install there is no pnpm store, so on a cache miss the post step failed with `Path Validation Error`
+and turned `pr-policy`'s `toolchain` job red for as long as no cache entry existed. The result depended
+on cache expiry, not on the pull request. Jobs that install behave as before.
